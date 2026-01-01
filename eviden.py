@@ -18,10 +18,11 @@ BULAN_INDO = {
 def normalize_name(raw_name):
     if pd.isna(raw_name): return ""
     name = str(raw_name).upper()
+    # Hapus gelar umum
     gelar_pattern = r'\b(DR|DRA|DRS|IR|S\.PD|M\.PD|S\.AG|M\.AG|S\.HUM|M\.HUM|S\.SI|M\.SI|S\.KOM|M\.KOM|PH\.D|M\.PI|S\.H|M\.H|I|II|S\.SOS|M\.SOS)\b'
     name = re.sub(gelar_pattern, '', name)
-    name = re.sub(r'[.,]', ' ', name)
-    name = " ".join(name.split())
+    name = re.sub(r'[.,]', ' ', name) # Hapus titik koma
+    name = " ".join(name.split()) # Hapus spasi ganda
     return name
 
 # --- 2. FUNGSI UTILITAS LINK ---
@@ -45,7 +46,7 @@ def process_links(raw_link_str):
         processed.append({'original': link, 'thumb': thumb})
     return processed
 
-# --- 3. LOAD DATA & PREPROCESSING WAKTU ---
+# --- 3. LOAD DATA & DETEKSI SEMUA PIHAK TERLIBAT ---
 @st.cache_data
 def load_data(url):
     try:
@@ -53,22 +54,36 @@ def load_data(url):
         df.columns = df.columns.str.strip() 
         df['Timestamp'] = pd.to_datetime(df['Timestamp'], dayfirst=True, errors='coerce')
         
+        # Buat Kolom Periode
         def get_periode_indo(dt):
             if pd.isna(dt): return "Tanggal Error"
             return f"{BULAN_INDO[dt.month]} {dt.year}"
-            
         df['Periode_Str'] = df['Timestamp'].apply(get_periode_indo)
         
-        dosen_cols = [c for c in df.columns if 'nama' in c.lower() and 'dosen' in c.lower()]
-        col_name = None
-        if dosen_cols:
-            col_name = dosen_cols[0]
-            df['Clean_Name'] = df[col_name].apply(normalize_name)
+        # --- PERBAIKAN UTAMA DISINI ---
+        # 1. Cari SEMUA kolom yang mengandung kata "Dosen", "Pembimbing", atau "Penguji"
+        keywords = ['dosen', 'pembimbing', 'penguji']
+        target_cols = [c for c in df.columns if 'nama' in c.lower() and any(k in c.lower() for k in keywords)]
         
-        return df, col_name
+        # 2. Normalisasi semua kolom tersebut agar bisa dicari
+        # Kita simpan di dataframe baru khusus untuk pencarian
+        search_df = df[target_cols].copy()
+        for col in target_cols:
+            search_df[col] = search_df[col].apply(normalize_name)
+            
+        # 3. Kumpulkan semua nama unik dari SELURUH kolom tersebut untuk Dropdown
+        unique_names = set()
+        for col in target_cols:
+            unique_names.update(search_df[col].dropna().unique())
+            
+        # Bersihkan list nama
+        clean_names_list = sorted([x for x in unique_names if isinstance(x, str) and x.strip() != ""])
+        
+        return df, target_cols, clean_names_list
+        
     except Exception as e:
         st.error(f"Error membaca CSV: {e}")
-        return None, None
+        return None, None, None
 
 def parse_evidence(row):
     jenis = str(row.get('Pilih Jenis Ujian', ''))
@@ -95,7 +110,7 @@ def parse_evidence(row):
 
     return {'label': label, 'ba': process_links(raw_ba), 'foto': process_links(raw_foto), 'naskah': process_links(raw_naskah)}
 
-# --- 4. PDF GENERATOR (SUDAH DIPERBAIKI UTK FPDF2) ---
+# --- 4. PDF GENERATOR ---
 def create_pdf(dataframe, dosen_name, periode_label):
     class PDF(FPDF):
         def header(self):
@@ -129,37 +144,50 @@ def create_pdf(dataframe, dosen_name, periode_label):
         pdf.multi_cell(150,5,txt,1)
         pdf.set_xy(x,y+h)
     
-    # --- PERBAIKAN DISINI ---
-    # Hapus .encode('latin-1') karena fpdf2 outputnya sudah bytes
+    # OUTPUT BYTES (FPDF2)
     return pdf.output(dest='S')
 
 # --- MAIN APP ---
 st.title("📂 Portal E-Eviden Ujian")
 
 url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQinSdwQBQZj649QKRimqqmTFQ0WaSlEHucehHOEg7jvTaioDXe0snCcpo3kTJJsnFrIcqEasjif9E8/pub?output=csv"
-df, nama_col_asli = load_data(url)
 
-if df is not None and nama_col_asli:
+# Load data dengan logika baru
+df, target_cols, clean_names_list = load_data(url)
+
+if df is not None and clean_names_list:
     st.sidebar.header("🔍 Filter Data")
     
-    clean_names = sorted([x for x in df['Clean_Name'].unique() if x.strip() != ""])
-    selected_clean_name = st.sidebar.selectbox("Pilih Nama Dosen:", clean_names)
+    # 1. Dropdown Nama (Sekarang berisi SEMUA dosen yang pernah disebut di sheet)
+    selected_clean_name = st.sidebar.selectbox("Pilih Nama Dosen/Penguji:", clean_names_list)
     
+    # 2. Dropdown Periode
     df_sorted = df.sort_values('Timestamp', ascending=False)
     unique_periodes = df_sorted['Periode_Str'].unique().tolist()
-    
     periode_options = ["Semua Waktu"] + unique_periodes
     selected_periode = st.sidebar.selectbox("Pilih Bulan/Tahun:", periode_options)
     
-    mask_name = df['Clean_Name'] == selected_clean_name
+    # --- LOGIKA FILTERING MULTI-KOLOM ---
+    # Cek apakah nama terpilih ada di SALAH SATU kolom (Dosen Utama / Pembimbing / Penguji)
+    mask_name = pd.Series(False, index=df.index)
+    
+    for col in target_cols:
+        # Kita normalisasi dulu kolom ini sebelum dicocokkan
+        col_norm = df[col].apply(normalize_name)
+        mask_name |= (col_norm == selected_clean_name)
+        
+    # Gabungkan dengan filter periode
     if selected_periode == "Semua Waktu":
-        df_filtered = df[mask_name].copy()
+        final_mask = mask_name
     else:
         mask_periode = df['Periode_Str'] == selected_periode
-        df_filtered = df[mask_name & mask_periode].copy()
+        final_mask = mask_name & mask_periode
+        
+    df_filtered = df[final_mask].copy()
     
-    st.info(f"Menampilkan **{len(df_filtered)}** kegiatan untuk: **{selected_clean_name}** ({selected_periode})")
+    st.info(f"Menampilkan **{len(df_filtered)}** kegiatan di mana **{selected_clean_name}** terlibat (sebagai Penguji, Pembimbing, atau Dosen Utama).")
     
+    # Sortir hasil berdasarkan tanggal terbaru
     df_filtered = df_filtered.sort_values('Timestamp', ascending=False)
     
     report_data = []
@@ -167,6 +195,7 @@ if df is not None and nama_col_asli:
     for idx, row in df_filtered.iterrows():
         ev = parse_evidence(row)
         
+        # Logika Keterangan (Matkul/Mhs)
         ket = "-"
         if pd.notna(row.get('Nama Matkul')):
             ket = row['Nama Matkul']
@@ -214,13 +243,11 @@ if df is not None and nama_col_asli:
         
         if st.sidebar.button("📥 Generate PDF"):
             try:
-                # BAGIAN INI JUGA PERLU DISESUAIKAN (Hapus encode)
                 pdf_bytes = create_pdf(df_rep, selected_clean_name, selected_periode)
-                # pdf_bytes sekarang sudah berupa bytearray, bisa langsung dimakan base64
                 b64 = base64.b64encode(pdf_bytes).decode()
                 href = f'<a href="data:application/pdf;base64,{b64}" download="{filename_base}.pdf">Klik Disini Save PDF</a>'
                 st.sidebar.markdown(href, unsafe_allow_html=True)
             except Exception as e: st.sidebar.error(f"Gagal buat PDF: {e}")
 
 else:
-    st.warning("Data belum bisa dibaca.")
+    st.warning("Data belum bisa dibaca. Pastikan Link CSV benar.")
