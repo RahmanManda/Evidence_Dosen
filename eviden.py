@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from fpdf import FPDF
 import base64
 import re
 from datetime import datetime
@@ -238,4 +239,5 @@ if df is not None and nama_col_asli:
 else:
 
     st.warning("Data belum bisa dibaca.")
+
 
