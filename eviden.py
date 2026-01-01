@@ -238,3 +238,4 @@ if df is not None and nama_col_asli:
 else:
 
     st.warning("Data belum bisa dibaca.")
+
