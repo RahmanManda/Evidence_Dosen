@@ -5,12 +5,6 @@ import base64
 import re
 from datetime import datetime
 
-# --- PERBAIKAN IMPORT FPDF ---
-try:
-    from fpdf import FPDF
-except ImportError:
-    st.error("Library FPDF tidak ditemukan. Pastikan requirements.txt sudah benar.")
-
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Sistem Pelaporan Ujian", layout="wide", page_icon="🎓")
 
@@ -59,15 +53,12 @@ def load_data(url):
         df.columns = df.columns.str.strip() 
         df['Timestamp'] = pd.to_datetime(df['Timestamp'], dayfirst=True, errors='coerce')
         
-        # Buat Kolom Periode (Misal: "Januari 2025")
-        # Menggunakan mapping manual agar bahasa Indonesia
         def get_periode_indo(dt):
             if pd.isna(dt): return "Tanggal Error"
             return f"{BULAN_INDO[dt.month]} {dt.year}"
             
         df['Periode_Str'] = df['Timestamp'].apply(get_periode_indo)
         
-        # Cari Kolom Dosen
         dosen_cols = [c for c in df.columns if 'nama' in c.lower() and 'dosen' in c.lower()]
         col_name = None
         if dosen_cols:
@@ -104,7 +95,7 @@ def parse_evidence(row):
 
     return {'label': label, 'ba': process_links(raw_ba), 'foto': process_links(raw_foto), 'naskah': process_links(raw_naskah)}
 
-# --- 4. PDF GENERATOR ---
+# --- 4. PDF GENERATOR (SUDAH DIPERBAIKI UTK FPDF2) ---
 def create_pdf(dataframe, dosen_name, periode_label):
     class PDF(FPDF):
         def header(self):
@@ -137,7 +128,10 @@ def create_pdf(dataframe, dosen_name, periode_label):
         pdf.cell(60,h,str(row['Keterangan'])[:35],1)
         pdf.multi_cell(150,5,txt,1)
         pdf.set_xy(x,y+h)
-    return pdf.output(dest='S').encode('latin-1')
+    
+    # --- PERBAIKAN DISINI ---
+    # Hapus .encode('latin-1') karena fpdf2 outputnya sudah bytes
+    return pdf.output(dest='S')
 
 # --- MAIN APP ---
 st.title("📂 Portal E-Eviden Ujian")
@@ -148,20 +142,15 @@ df, nama_col_asli = load_data(url)
 if df is not None and nama_col_asli:
     st.sidebar.header("🔍 Filter Data")
     
-    # 1. Filter Nama Dosen
     clean_names = sorted([x for x in df['Clean_Name'].unique() if x.strip() != ""])
     selected_clean_name = st.sidebar.selectbox("Pilih Nama Dosen:", clean_names)
     
-    # 2. Filter Periode (Baru!)
-    # Ambil daftar periode unik dan urutkan secara tanggal (bukan abjad)
     df_sorted = df.sort_values('Timestamp', ascending=False)
     unique_periodes = df_sorted['Periode_Str'].unique().tolist()
     
-    # Tambahkan opsi 'Semua Waktu' di paling atas
     periode_options = ["Semua Waktu"] + unique_periodes
     selected_periode = st.sidebar.selectbox("Pilih Bulan/Tahun:", periode_options)
     
-    # --- LOGIKA FILTERING ---
     mask_name = df['Clean_Name'] == selected_clean_name
     if selected_periode == "Semua Waktu":
         df_filtered = df[mask_name].copy()
@@ -171,8 +160,6 @@ if df is not None and nama_col_asli:
     
     st.info(f"Menampilkan **{len(df_filtered)}** kegiatan untuk: **{selected_clean_name}** ({selected_periode})")
     
-    # --- TAMPILKAN DATA PER KELOMPOK BULAN ---
-    # Kita urutkan dulu datanya biar rapi
     df_filtered = df_filtered.sort_values('Timestamp', ascending=False)
     
     report_data = []
@@ -180,7 +167,6 @@ if df is not None and nama_col_asli:
     for idx, row in df_filtered.iterrows():
         ev = parse_evidence(row)
         
-        # Logika Nama
         ket = "-"
         if pd.notna(row.get('Nama Matkul')):
             ket = row['Nama Matkul']
@@ -199,7 +185,6 @@ if df is not None and nama_col_asli:
             'Links_Naskah': [x['original'] for x in ev['naskah']]
         })
         
-        # Kartu Kegiatan
         with st.expander(f"📅 {row['Timestamp'].strftime('%d %b %Y')} | {row['Pilih Jenis Ujian']} | {ket}"):
             c1, c2 = st.columns([1,2])
             with c1:
@@ -218,12 +203,10 @@ if df is not None and nama_col_asli:
                     st.markdown("**Link Foto:**")
                     for x in ev['foto']: st.code(x['original'], language='text')
 
-    # --- DOWNLOAD AREA ---
     if report_data:
         st.sidebar.divider()
         df_rep = pd.DataFrame(report_data)
         
-        # Nama File Dinamis (Ada bulannya)
         safe_periode = selected_periode.replace(" ", "_")
         filename_base = f"Laporan_{selected_clean_name}_{safe_periode}"
         
@@ -231,13 +214,13 @@ if df is not None and nama_col_asli:
         
         if st.sidebar.button("📥 Generate PDF"):
             try:
-                b64 = base64.b64encode(create_pdf(df_rep, selected_clean_name, selected_periode)).decode()
+                # BAGIAN INI JUGA PERLU DISESUAIKAN (Hapus encode)
+                pdf_bytes = create_pdf(df_rep, selected_clean_name, selected_periode)
+                # pdf_bytes sekarang sudah berupa bytearray, bisa langsung dimakan base64
+                b64 = base64.b64encode(pdf_bytes).decode()
                 href = f'<a href="data:application/pdf;base64,{b64}" download="{filename_base}.pdf">Klik Disini Save PDF</a>'
                 st.sidebar.markdown(href, unsafe_allow_html=True)
             except Exception as e: st.sidebar.error(f"Gagal buat PDF: {e}")
 
 else:
-
     st.warning("Data belum bisa dibaca.")
-
-
