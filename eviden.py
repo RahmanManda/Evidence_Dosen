@@ -1,9 +1,14 @@
 import streamlit as st
 import pandas as pd
-from fpdf import FPDF
 import base64
 import re
 from datetime import datetime
+
+# --- PERBAIKAN IMPORT FPDF ---
+try:
+    from fpdf import FPDF
+except ImportError:
+    st.error("Library FPDF tidak ditemukan. Pastikan requirements.txt sudah benar.")
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Sistem Pelaporan Ujian", layout="wide", page_icon="🎓")
@@ -231,4 +236,5 @@ if df is not None and nama_col_asli:
             except Exception as e: st.sidebar.error(f"Gagal buat PDF: {e}")
 
 else:
+
     st.warning("Data belum bisa dibaca.")
