@@ -1,4 +1,5 @@
 streamlit
-fpdf2
 pandas
+fpdf2
+
 
