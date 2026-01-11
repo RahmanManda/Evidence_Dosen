@@ -157,8 +157,8 @@ nama_dekan = st.sidebar.text_input("Nama Dekan", "Dr. H. Sahjad M. Aksan, M.Phil
 nip_dekan = st.sidebar.text_input("NIP Dekan", "19xxxxxxx")
 
 if df is not None:
-    if menu == "1. Cek Bukti Mahasiswa":
-        st.title("📂 Data Evidence Mahasiswa")
+    if menu == "1. Cek Evidence Ujian":
+        st.title("📂 Evidence Ujian")
         search = st.text_input("🔍 Cari Nama Dosen atau Mahasiswa:")
         
         # Filter Logic
