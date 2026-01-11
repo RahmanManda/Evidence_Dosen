@@ -152,7 +152,7 @@ df, target_cols = load_data(url)
 if 'manual_data' not in st.session_state: st.session_state['manual_data'] = []
 
 st.sidebar.title("Navigasi")
-menu = st.sidebar.radio("Menu:", ["1. Cek Bukti Mahasiswa", "2. Buat LCKB (Dosen)"])
+menu = st.sidebar.radio("Menu:", ["1. Cek Evidence Ujian", "2. Buat LCKB (Dosen)"])
 nama_dekan = st.sidebar.text_input("Nama Dekan", "Dr. H. Sahjad M. Aksan, M.Phil")
 nip_dekan = st.sidebar.text_input("NIP Dekan", "19xxxxxxx")
 
