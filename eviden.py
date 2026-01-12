@@ -41,49 +41,57 @@ KATEGORI_LABEL = {
     'D': 'BIDANG PENUNJANG AKADEMIK'
 }
 
-# --- GOOGLE DRIVE MANAGER ---
+# --- GOOGLE DRIVE MANAGER (FIXED ERROR HANDLING) ---
 def get_drive_service():
-    if "gcp_service_account" not in st.secrets: return None
-    creds = service_account.Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=['https://www.googleapis.com/auth/drive']
-    )
-    return build('drive', 'v3', credentials=creds)
+    if "gcp_service_account" not in st.secrets:
+        return None, "Secret 'gcp_service_account' tidak ditemukan di .streamlit/secrets.toml"
+    try:
+        creds = service_account.Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"], scopes=['https://www.googleapis.com/auth/drive']
+        )
+        return build('drive', 'v3', credentials=creds), None
+    except Exception as e:
+        return None, str(e)
 
 def get_or_create_folder(service, folder_name, parent_id):
-    query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and '{parent_id}' in parents and trashed=false"
-    results = service.files().list(q=query, fields="files(id, webViewLink)").execute()
-    files = results.get('files', [])
-    if files: return files[0]['id'], files[0]['webViewLink']
-    else:
-        metadata = {'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_id]}
-        folder = service.files().create(body=metadata, fields="id, webViewLink").execute()
-        return folder['id'], folder['webViewLink']
+    try:
+        query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and '{parent_id}' in parents and trashed=false"
+        results = service.files().list(q=query, fields="files(id, webViewLink)").execute()
+        files = results.get('files', [])
+        if files: return files[0]['id'], files[0]['webViewLink']
+        else:
+            metadata = {'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_id]}
+            folder = service.files().create(body=metadata, fields="id, webViewLink").execute()
+            return folder['id'], folder['webViewLink']
+    except Exception as e:
+        raise Exception(f"Gagal buat folder '{folder_name}': {str(e)}")
 
 def upload_file_to_drive(file_obj, filename, dosen_name, tahun, semester, kategori, nama_kegiatan):
+    service, err = get_drive_service()
+    if not service: return None, err
+    
     try:
-        service = get_drive_service()
-        if not service: return None, None
         root_id = st.secrets["target_folder_id"]
         
-        # Struktur Folder
+        # 1. Buat Struktur Folder
         dosen_id, _ = get_or_create_folder(service, dosen_name, root_id)
         tahun_id, _ = get_or_create_folder(service, str(tahun), dosen_id)
         sem_id, _ = get_or_create_folder(service, semester, tahun_id)
         kat_clean = KATEGORI_LABEL[kategori].replace("BIDANG ", "")
         kat_id, _ = get_or_create_folder(service, kat_clean, sem_id)
         
-        # Buat Folder Kegiatan (Link ini yang diambil sebagai bukti)
+        # 2. Buat Folder Kegiatan
         safe_kegiatan = re.sub(r'[\\/*?:"<>|]', "", nama_kegiatan)[:50] 
         kegiatan_id, kegiatan_link = get_or_create_folder(service, safe_kegiatan, kat_id)
         
-        # Upload File ke dalam Folder Kegiatan
+        # 3. Upload File
         media = MediaIoBaseUpload(file_obj, mimetype=file_obj.type)
         file_meta = {'name': filename, 'parents': [kegiatan_id]}
         service.files().create(body=file_meta, media_body=media, fields='webViewLink').execute()
         
-        return kegiatan_link
+        return kegiatan_link, None # Sukses, Error=None
     except Exception as e:
-        st.error(f"Gagal Upload Drive: {e}"); return None
+        return None, str(e) # Gagal, Return Error Message
 
 # --- FUNGSI HELPER & PARSING ---
 def normalize_name(raw_name):
@@ -118,7 +126,6 @@ def process_links(raw_link_str):
 def parse_evidence_full(row):
     jenis = str(row.get('Pilih Jenis Ujian', ''))
     
-    # Fungsi pencari kolom super agresif agar link tidak hilang
     def find_val(keywords):
         for c in row.index:
             if all(k.lower() in c.lower() for k in keywords):
@@ -294,7 +301,7 @@ def create_evidence_docx_bytes(df_filtered, dosen_name, periode_label):
         f = BytesIO(); doc.save(f); return f.getvalue()
     except: return None
 
-# --- GENERATOR LCKB (FIXED LINK LOGIC) ---
+# --- GENERATOR LCKB (SATUAN & LINK FIX) ---
 class LCKB_PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -327,10 +334,10 @@ def create_lckb_pdf_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip_
                     pdf.cell(10, 6, str(no), 1, 0, 'C'); pdf.cell(80, 6, desc[:50], 1, 0, 'L')
                     pdf.cell(15, 6, str(item['volume']), 1, 0, 'C'); pdf.cell(25, 6, item['satuan'], 1, 0, 'C')
                     
-                    # LOGIC PRINT LINK
+                    # LOGIC PRINT LINK (AUTO & MANUAL)
                     links_raw = item.get('bukti_list', [])
                     
-                    # 1. JIKA MULTI-LINK (DATA AUTO DARI CSV)
+                    # 1. JIKA MULTI-LINK (AUTO - BIDANG A)
                     if links_raw and isinstance(links_raw, list):
                         w_cell = 60
                         count = len(links_raw)
@@ -352,7 +359,7 @@ def create_lckb_pdf_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip_
                         pdf.set_text_color(0, 0, 0); pdf.set_font('Arial', '', 8)
                         pdf.ln()
 
-                    # 2. JIKA SINGLE LINK (DATA MANUAL)
+                    # 2. JIKA SINGLE LINK (MANUAL - BIDANG B/C/D)
                     else:
                         link_val = str(item['bukti']).strip()
                         txt_display = "Link Folder" if "http" in link_val else link_val
@@ -386,12 +393,17 @@ def create_lckb_docx_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip
                 links_raw = it.get('bukti_list', [])
                 cell_bukti = cells[4]
                 
+                # JIKA AUTO (BIDANG A)
                 if links_raw and isinstance(links_raw, list):
                     p = cell_bukti.add_paragraph()
                     valid_links = [l for l in links_raw if l['url']]
-                    for i, lnk in enumerate(valid_links):
-                        add_hyperlink(p, lnk['url'], lnk['label'])
-                        if i < len(valid_links) - 1: p.add_run(" | ")
+                    if valid_links:
+                        for i, lnk in enumerate(valid_links):
+                            add_hyperlink(p, lnk['url'], lnk['label'])
+                            if i < len(valid_links) - 1: p.add_run(" | ")
+                    else:
+                         cell_bukti.text = "-"
+                # JIKA MANUAL (BIDANG B/C/D)
                 else:
                     link_val = str(it['bukti']).strip()
                     if "http" in link_val: add_hyperlink(cell_bukti.add_paragraph(), link_val, "Link Folder")
@@ -414,7 +426,7 @@ nama_dekan = st.sidebar.text_input("Nama Dekan", "Dr. H. Sahjad M. Aksan, M.Phil
 nip_dekan = st.sidebar.text_input("NIP Dekan", "19xxxxxxx")
 
 if df is not None:
-    # --- MENU 1 (EVIDENCE) ---
+    # --- MENU 1 ---
     if menu == "1. Cek Evidence & Cetak":
         st.title("📂 Data Evidence")
         c1, c2, c3 = st.columns(3)
@@ -453,17 +465,17 @@ if df is not None:
                 c_p.download_button("📄 PDF Laporan", create_evidence_pdf_bytes(df_f, dsn, label), f"Lap_{dsn}.pdf", "application/pdf")
                 c_w.download_button("📝 Word Laporan", create_evidence_docx_bytes(df_f, dsn, label), f"Lap_{dsn}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
-    # --- MENU 2: LCKB (FIX 1: RESET DATA, FIX 2: LINK HYBRID) ---
+    # --- MENU 2: LCKB ---
     elif menu == "2. Buat LCKB (Dosen)":
         st.title("📝 Buat LCKB (Upload ke Drive)")
         
         c1, c2, c3 = st.columns(3)
         dsn = c1.selectbox("Dosen:", DAFTAR_DOSEN_RESMI)
         
-        # LOGIKA RESET JIKA GANTI DOSEN
+        # LOGIKA RESET JIKA GANTI DOSEN (FIX MASALAH 1)
         if st.session_state['last_dosen'] != dsn:
-            st.session_state['manual_data'] = [] # Reset
-            st.session_state['last_dosen'] = dsn # Update
+            st.session_state['manual_data'] = [] 
+            st.session_state['last_dosen'] = dsn
 
         bln = c2.selectbox("Bulan:", list(BULAN_INDO.values()))
         thn = c3.number_input("Tahun", 2024, 2030, datetime.now().year)
@@ -482,30 +494,34 @@ if df is not None:
                 vol = col_vol.number_input("Volume", 1); sat = col_sat.text_input("Satuan", "SKS/Kegiatan")
                 st.markdown("---")
                 uploaded_file = st.file_uploader("Upload Bukti (PDF/Gambar)")
+                
+                # TOMBOL SIMPAN (FIX MASALAH 2 & 3: NO AUTO-RERUN IF ERROR)
                 if st.form_submit_button("Simpan & Upload"):
                     if not ur: st.error("Uraian Kegiatan wajib diisi.")
                     else:
-                        folder_link = "-"
+                        folder_link, err_msg = None, None
                         if uploaded_file:
                             with st.spinner("Sedang proses upload..."):
-                                folder_link = upload_file_to_drive(uploaded_file, uploaded_file.name, dsn, thn, semester, kat, ur)
-                                if folder_link: st.success("✅ Berhasil Upload!")
+                                folder_link, err_msg = upload_file_to_drive(uploaded_file, uploaded_file.name, dsn, thn, semester, kat, ur)
                         
-                        st.session_state['manual_data'].append({
-                            'kategori': kat, 'uraian': ur, 'volume': vol, 'satuan': sat, 'bukti': folder_link if folder_link else "-"
-                        })
-                        st.rerun()
+                        if err_msg:
+                            st.error(f"❌ Upload Gagal: {err_msg}")
+                        else:
+                            if uploaded_file: st.success("✅ Upload Berhasil!")
+                            st.session_state['manual_data'].append({
+                                'kategori': kat, 'uraian': ur, 'volume': vol, 'satuan': sat, 'bukti': folder_link if folder_link else "-"
+                            })
+                            st.rerun()
 
         st.divider(); st.subheader("📋 Draft Laporan")
         
-        # 1. AUTO DATA (LCKB BIDANG A - MULTI LINK DARI CSV)
+        # 1. AUTO DATA (SATUAN KELAS/MHS & LINK MULTI)
         if not df_auto.empty:
             st.info("Data Otomatis (Ujian/Evidence):")
             auto_data = []
             for _, r in df_auto.iterrows():
                 ev = parse_evidence_full(r)
                 
-                # KUMPULKAN LINK DARI CSV
                 link_collection = []
                 if ev['ba']: link_collection.append({'label': 'BA', 'url': ev['ba'][0]['original']})
                 if ev['naskah']: link_collection.append({'label': 'Soal', 'url': ev['naskah'][0]['original']})
@@ -513,23 +529,26 @@ if df is not None:
                 if ev['penunjukan']: link_collection.append({'label': 'SK', 'url': ev['penunjukan'][0]['original']})
                 if ev['foto']: link_collection.append({'label': 'Foto', 'url': ev['foto'][0]['original']})
                 
-                if not link_collection:
-                    link_collection.append({'label': '-', 'url': ''})
+                if not link_collection: link_collection.append({'label': '-', 'url': ''})
 
-                uraian_txt = ""
+                uraian_txt = ""; satuan_txt = "Mhs" # Default
                 jenis = str(r.get('Pilih Jenis Ujian', ''))
-                if 'UAS' in jenis: uraian_txt = f"Menguji UAS - {r.get('Nama Matkul','-')} ({r.get('Nama Kelas','-')})"
-                else: uraian_txt = f"Menguji {jenis} - {r.get('Nama Lengkap Mahasiswa','-')}"
+                
+                if 'UAS' in jenis: 
+                    uraian_txt = f"Menguji UAS - {r.get('Nama Matkul','-')} ({r.get('Nama Kelas','-')})"
+                    satuan_txt = "Kelas" # Fix Satuan UAS
+                else: 
+                    uraian_txt = f"Menguji {jenis} - {r.get('Nama Lengkap Mahasiswa','-')}"
 
                 auto_data.append({
-                    'kategori': 'A', 'uraian': uraian_txt, 'volume': 1, 'satuan': 'Mhs', 
+                    'kategori': 'A', 'uraian': uraian_txt, 'volume': 1, 'satuan': satuan_txt, 
                     'bukti': 'Auto', 'bukti_list': link_collection
                 })
             st.dataframe(pd.DataFrame(auto_data)[['uraian','volume','satuan']], use_container_width=True)
         else:
             auto_data = []
 
-        # 2. MANUAL DATA (EDITABLE)
+        # 2. MANUAL DATA
         if st.session_state['manual_data']:
             st.warning("Data Manual:")
             df_manual = pd.DataFrame(st.session_state['manual_data'])
