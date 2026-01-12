@@ -65,7 +65,6 @@ def upload_file_to_drive(file_obj, filename, dosen_name, tahun, semester, katego
         if not service: return None, None
         root_id = st.secrets["target_folder_id"]
         
-        # Struktur Folder: Dosen > Tahun > Semester > Kategori > Nama Kegiatan
         dosen_id, _ = get_or_create_folder(service, dosen_name, root_id)
         tahun_id, _ = get_or_create_folder(service, str(tahun), dosen_id)
         sem_id, _ = get_or_create_folder(service, semester, tahun_id)
@@ -74,12 +73,10 @@ def upload_file_to_drive(file_obj, filename, dosen_name, tahun, semester, katego
         safe_kegiatan = re.sub(r'[\\/*?:"<>|]', "", nama_kegiatan)[:50] 
         kegiatan_id, kegiatan_link = get_or_create_folder(service, safe_kegiatan, kat_id)
         
-        # Upload File
         media = MediaIoBaseUpload(file_obj, mimetype=file_obj.type)
         file_meta = {'name': filename, 'parents': [kegiatan_id]}
         service.files().create(body=file_meta, media_body=media, fields='webViewLink').execute()
         
-        # Return Link FOLDER
         return kegiatan_link
     except Exception as e:
         st.error(f"Gagal Upload Drive: {e}"); return None
@@ -162,7 +159,7 @@ def load_data(url):
         st.error(f"Error membaca CSV: {e}")
         return None, None
 
-# --- GENERATOR PDF EVIDENCE (MENU 1) ---
+# --- GENERATOR PDF EVIDENCE ---
 class EvidencePDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -177,7 +174,7 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
         pdf.set_font('Arial', '', 10); pdf.cell(0, 5, f'PERIODE: {periode_label.upper()}', 0, 1, 'C'); pdf.ln(8)
         pdf.set_font('Arial', '', 10); pdf.cell(30, 5, 'Nama Dosen', 0, 0); pdf.cell(5, 5, ':', 0, 0); pdf.cell(0, 5, dosen_name, 0, 1); pdf.ln(5)
 
-        # UJIAN UAS
+        # BAGIAN 1: UAS
         df_uas = df_filtered[df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
         if not df_uas.empty:
             pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'A. UJIAN AKHIR SEMESTER (UAS)', 0, 1, 'L')
@@ -201,7 +198,7 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 no += 1
             pdf.ln(5)
 
-        # UJIAN NON-UAS
+        # BAGIAN 2: NON-UAS
         df_non = df_filtered[~df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
         if not df_non.empty:
             pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'B. UJIAN LAINNYA', 0, 1, 'L')
@@ -234,7 +231,7 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
         return pdf.output(dest='S').encode('latin-1', 'ignore')
     except: return None
 
-# --- GENERATOR WORD EVIDENCE (MENU 1) ---
+# --- GENERATOR WORD EVIDENCE ---
 def add_hyperlink(paragraph, url, text, color="0000FF", underline=True):
     part = paragraph.part; r_id = part.relate_to(url, RT.HYPERLINK, is_external=True)
     hyperlink = OxmlElement('w:hyperlink'); hyperlink.set(qn('r:id'), r_id)
@@ -294,7 +291,7 @@ def create_evidence_docx_bytes(df_filtered, dosen_name, periode_label):
         f = BytesIO(); doc.save(f); return f.getvalue()
     except: return None
 
-# --- GENERATOR LCKB (MENU 2 - UPDATED NUMBERING & LINKS) ---
+# --- GENERATOR LCKB (MENU 2 - FINAL FIX LINKS) ---
 class LCKB_PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -330,7 +327,7 @@ def create_lckb_pdf_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip_
                     
                     # LOGIC LINK (Memastikan link muncul)
                     link_val = str(item['bukti']).strip()
-                    txt_display = "Buka Link Folder" if "http" in link_val else link_val
+                    txt_display = "Buka Link" if "http" in link_val else link_val
                     if "http" in link_val:
                          pdf.cell(60, 6, txt_display, 1, 1, 'C', link=link_val)
                     else:
@@ -358,7 +355,7 @@ def create_lckb_docx_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip
             for it in [x for x in data_items if x['kategori'] == kat]:
                 cells = table.add_row().cells; cells[0].text, cells[1].text, cells[2].text, cells[3].text = str(no), it['uraian'], str(it['volume']), it['satuan']
                 
-                # LOGIC LINK
+                # LOGIC LINK WORD
                 link_val = str(it['bukti']).strip()
                 if "http" in link_val: add_hyperlink(cells[4].add_paragraph(), link_val, "Buka Link")
                 else: cells[4].text = link_val
@@ -377,7 +374,7 @@ nama_dekan = st.sidebar.text_input("Nama Dekan", "Dr. H. Sahjad M. Aksan, M.Phil
 nip_dekan = st.sidebar.text_input("NIP Dekan", "19xxxxxxx")
 
 if df is not None:
-    # --- MENU 1 (LOCKED & PERFECT) ---
+    # --- MENU 1 (LOCKED) ---
     if menu == "1. Cek Evidence & Cetak":
         st.title("📂 Data Evidence")
         c1, c2, c3 = st.columns(3)
@@ -416,7 +413,7 @@ if df is not None:
                 c_p.download_button("📄 PDF Laporan", create_evidence_pdf_bytes(df_f, dsn, label), f"Lap_{dsn}.pdf", "application/pdf")
                 c_w.download_button("📝 Word Laporan", create_evidence_docx_bytes(df_f, dsn, label), f"Lap_{dsn}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
-    # --- MENU 2: LCKB (UPDATED: EDITABLE TABLE & LINK FIX) ---
+    # --- MENU 2: LCKB (FIXED LINKS & EDITABLE) ---
     elif menu == "2. Buat LCKB (Dosen)":
         st.title("📝 Buat LCKB (Upload ke Drive)")
         st.caption("Semua file yang diupload disini otomatis masuk ke Google Drive dengan folder rapi.")
@@ -442,7 +439,6 @@ if df is not None:
                 col_vol, col_sat = st.columns(2)
                 vol = col_vol.number_input("Volume", 1); sat = col_sat.text_input("Satuan", "SKS/Kegiatan")
                 
-                # UPLOAD SIMPEL
                 st.markdown("---")
                 uploaded_file = st.file_uploader("Upload Bukti (PDF/Gambar)")
                 
@@ -460,32 +456,47 @@ if df is not None:
                         })
                         st.rerun()
 
-        # BAGIAN EDIT/HAPUS (FITUR BARU)
+        # BAGIAN EDIT/HAPUS & AUTO DATA LINK FIX
         st.divider()
         st.subheader("📋 Draft Laporan")
         
-        # 1. Tampilkan Data Otomatis (Read Only)
+        # 1. AUTO DATA (READ-ONLY tapi LINKNYA SUDAH DIPERBAIKI)
         if not df_auto.empty:
-            st.info("Data di bawah ini ditarik otomatis dari sistem Ujian (Tidak bisa diedit disini).")
-            auto_data = [{'kategori':'A', 'uraian':f"Menguji {r.get('Pilih Jenis Ujian')} - {r.get('Nama Lengkap Mahasiswa')}", 'volume':1, 'satuan':'Mhs', 'bukti':'-'} for _, r in df_auto.iterrows()]
+            st.info("Data Otomatis (UAS/Evidence):")
+            auto_data = []
+            for _, r in df_auto.iterrows():
+                # AMBIL LINK DARI EVIDENCE (Logic Perbaikan)
+                ev = parse_evidence_full(r)
+                link_ev = "-"
+                # Prioritas link: BA -> Foto -> Naskah -> Undangan -> Penunjukan
+                if ev['ba']: link_ev = ev['ba'][0]['original']
+                elif ev['foto']: link_ev = ev['foto'][0]['original']
+                elif ev['naskah']: link_ev = ev['naskah'][0]['original']
+                elif ev['undangan']: link_ev = ev['undangan'][0]['original']
+                elif ev['penunjukan']: link_ev = ev['penunjukan'][0]['original']
+
+                auto_data.append({
+                    'kategori': 'A', 
+                    'uraian': f"Menguji {r.get('Pilih Jenis Ujian')} - {r.get('Nama Lengkap Mahasiswa')}", 
+                    'volume': 1, 
+                    'satuan': 'Mhs', 
+                    'bukti': link_ev
+                })
             st.dataframe(auto_data, use_container_width=True)
         else:
             auto_data = []
 
-        # 2. Tampilkan Data Manual (BISA DIEDIT/HAPUS)
+        # 2. MANUAL DATA (EDITABLE)
         if st.session_state['manual_data']:
-            st.warning("Data di bawah ini adalah inputan manual Anda. Silakan Edit/Hapus jika perlu.")
+            st.warning("Data Manual (Bisa Diedit/Hapus):")
             df_manual = pd.DataFrame(st.session_state['manual_data'])
-            
-            # EDITOR INTERAKTIF
             edited_df = st.data_editor(df_manual, num_rows="dynamic", use_container_width=True, key="editor_manual")
             
-            # SIMPAN PERUBAHAN
             if not df_manual.equals(edited_df):
                 st.session_state['manual_data'] = edited_df.to_dict('records')
                 st.rerun()
         
-        # Gabung Data untuk Cetak
+        # GABUNG & CETAK
         final_list = auto_data + st.session_state['manual_data']
         
         if final_list:
