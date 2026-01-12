@@ -65,15 +65,18 @@ def upload_file_to_drive(file_obj, filename, dosen_name, tahun, semester, katego
         if not service: return None, None
         root_id = st.secrets["target_folder_id"]
         
+        # Struktur Folder
         dosen_id, _ = get_or_create_folder(service, dosen_name, root_id)
         tahun_id, _ = get_or_create_folder(service, str(tahun), dosen_id)
         sem_id, _ = get_or_create_folder(service, semester, tahun_id)
         kat_clean = KATEGORI_LABEL[kategori].replace("BIDANG ", "")
         kat_id, _ = get_or_create_folder(service, kat_clean, sem_id)
         
+        # Buat Folder Kegiatan (Link ini yang diambil sebagai bukti)
         safe_kegiatan = re.sub(r'[\\/*?:"<>|]', "", nama_kegiatan)[:50] 
         kegiatan_id, kegiatan_link = get_or_create_folder(service, safe_kegiatan, kat_id)
         
+        # Upload File ke dalam Folder Kegiatan
         media = MediaIoBaseUpload(file_obj, mimetype=file_obj.type)
         file_meta = {'name': filename, 'parents': [kegiatan_id]}
         service.files().create(body=file_meta, media_body=media, fields='webViewLink').execute()
@@ -115,6 +118,7 @@ def process_links(raw_link_str):
 def parse_evidence_full(row):
     jenis = str(row.get('Pilih Jenis Ujian', ''))
     
+    # Fungsi pencari kolom super agresif agar link tidak hilang
     def find_val(keywords):
         for c in row.index:
             if all(k.lower() in c.lower() for k in keywords):
@@ -290,7 +294,7 @@ def create_evidence_docx_bytes(df_filtered, dosen_name, periode_label):
         f = BytesIO(); doc.save(f); return f.getvalue()
     except: return None
 
-# --- GENERATOR LCKB (MENU 2 - FIX TOTAL) ---
+# --- GENERATOR LCKB (FIXED LINK LOGIC) ---
 class LCKB_PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -323,26 +327,35 @@ def create_lckb_pdf_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip_
                     pdf.cell(10, 6, str(no), 1, 0, 'C'); pdf.cell(80, 6, desc[:50], 1, 0, 'L')
                     pdf.cell(15, 6, str(item['volume']), 1, 0, 'C'); pdf.cell(25, 6, item['satuan'], 1, 0, 'C')
                     
-                    # LOGIC CETAK LINK CERDAS
-                    links_raw = item.get('bukti_list', []) # Ambil list link khusus jika ada
+                    # LOGIC PRINT LINK
+                    links_raw = item.get('bukti_list', [])
+                    
+                    # 1. JIKA MULTI-LINK (DATA AUTO DARI CSV)
                     if links_raw and isinstance(links_raw, list):
-                        # Cetak multi-cell jika link banyak (Untuk Bidang A CSV)
-                        x_start = pdf.get_x(); y_start = pdf.get_y()
+                        w_cell = 60
+                        count = len(links_raw)
+                        w_item = w_cell / count if count > 0 else 60
                         
-                        # Loop link ke samping
-                        w_link = 60 / len(links_raw)
+                        current_x = pdf.get_x()
+                        current_y = pdf.get_y()
+                        
+                        pdf.set_font('Arial', 'U', 8); pdf.set_text_color(0, 0, 255)
                         for lnk in links_raw:
                             lbl = lnk['label']
                             url = lnk['url']
-                            pdf.set_font('Arial', 'U', 8); pdf.set_text_color(0, 0, 255)
-                            pdf.cell(w_link, 6, lbl, 1, 0, 'C', link=url)
+                            if url:
+                                pdf.cell(w_item, 6, lbl, 1, 0, 'C', link=url)
+                            else:
+                                pdf.set_text_color(0,0,0); pdf.set_font('Arial', '', 8)
+                                pdf.cell(w_item, 6, "-", 1, 0, 'C')
+                                pdf.set_font('Arial', 'U', 8); pdf.set_text_color(0, 0, 255)
                         pdf.set_text_color(0, 0, 0); pdf.set_font('Arial', '', 8)
                         pdf.ln()
 
+                    # 2. JIKA SINGLE LINK (DATA MANUAL)
                     else:
-                        # Logic Manual / Single Link
                         link_val = str(item['bukti']).strip()
-                        txt_display = "Folder Kegiatan" if "http" in link_val else link_val
+                        txt_display = "Link Folder" if "http" in link_val else link_val
                         if "http" in link_val:
                              pdf.cell(60, 6, txt_display, 1, 1, 'C', link=link_val)
                         else:
@@ -372,14 +385,16 @@ def create_lckb_docx_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip
                 # Logic Word Cerdas
                 links_raw = it.get('bukti_list', [])
                 cell_bukti = cells[4]
+                
                 if links_raw and isinstance(links_raw, list):
-                    p = cell_bukti.paragraphs[0]
-                    for i, lnk in enumerate(links_raw):
+                    p = cell_bukti.add_paragraph()
+                    valid_links = [l for l in links_raw if l['url']]
+                    for i, lnk in enumerate(valid_links):
                         add_hyperlink(p, lnk['url'], lnk['label'])
-                        if i < len(links_raw) - 1: p.add_run(" | ")
+                        if i < len(valid_links) - 1: p.add_run(" | ")
                 else:
                     link_val = str(it['bukti']).strip()
-                    if "http" in link_val: add_hyperlink(cell_bukti.paragraphs[0], link_val, "Folder Kegiatan")
+                    if "http" in link_val: add_hyperlink(cell_bukti.add_paragraph(), link_val, "Link Folder")
                     else: cell_bukti.text = link_val
                 no += 1
         f = BytesIO(); doc.save(f); return f.getvalue()
@@ -388,7 +403,10 @@ def create_lckb_docx_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip
 # --- MAIN APP ---
 url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQinSdwQBQZj649QKRimqqmTFQ0WaSlEHucehHOEg7jvTaioDXe0snCcpo3kTJJsnFrIcqEasjif9E8/pub?output=csv"
 df, target_cols = load_data(url)
+
+# INITIALIZE SESSION
 if 'manual_data' not in st.session_state: st.session_state['manual_data'] = []
+if 'last_dosen' not in st.session_state: st.session_state['last_dosen'] = ""
 
 st.sidebar.title("Navigasi")
 menu = st.sidebar.radio("Menu:", ["1. Cek Evidence & Cetak", "2. Buat LCKB (Dosen)"])
@@ -435,16 +453,20 @@ if df is not None:
                 c_p.download_button("📄 PDF Laporan", create_evidence_pdf_bytes(df_f, dsn, label), f"Lap_{dsn}.pdf", "application/pdf")
                 c_w.download_button("📝 Word Laporan", create_evidence_docx_bytes(df_f, dsn, label), f"Lap_{dsn}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
-    # --- MENU 2: LCKB (FIXED TOTAL) ---
+    # --- MENU 2: LCKB (FIX 1: RESET DATA, FIX 2: LINK HYBRID) ---
     elif menu == "2. Buat LCKB (Dosen)":
         st.title("📝 Buat LCKB (Upload ke Drive)")
-        st.caption("Semua file yang diupload disini otomatis masuk ke Google Drive dengan folder rapi.")
         
         c1, c2, c3 = st.columns(3)
         dsn = c1.selectbox("Dosen:", DAFTAR_DOSEN_RESMI)
+        
+        # LOGIKA RESET JIKA GANTI DOSEN
+        if st.session_state['last_dosen'] != dsn:
+            st.session_state['manual_data'] = [] # Reset
+            st.session_state['last_dosen'] = dsn # Update
+
         bln = c2.selectbox("Bulan:", list(BULAN_INDO.values()))
         thn = c3.number_input("Tahun", 2024, 2030, datetime.now().year)
-        
         b_int = list(BULAN_INDO.keys())[list(BULAN_INDO.values()).index(bln)]
         semester = "Semester Ganjil" if b_int >= 7 else "Semester Genap"
         
@@ -453,7 +475,6 @@ if df is not None:
         df_auto = df[mask_d & (df['Bulan']==b_int) & (df['Tahun']==thn)]
         
         with st.expander("➕ Tambah Kegiatan & Upload Bukti", expanded=True):
-            st.write(f"**Penyimpanan Drive:** {dsn} > {thn} > {semester}")
             with st.form("upload_form"):
                 kat = st.selectbox("Kategori", list(KATEGORI_LABEL.keys()), format_func=lambda x:KATEGORI_LABEL[x])
                 ur = st.text_input("Uraian Kegiatan (Nama Folder)", placeholder="Contoh: Mengajar MK Fiqih Kelas A")
@@ -477,14 +498,14 @@ if df is not None:
 
         st.divider(); st.subheader("📋 Draft Laporan")
         
-        # 1. AUTO DATA (LCKB BIDANG A - SESUAI KOLOM EVIDENCE)
+        # 1. AUTO DATA (LCKB BIDANG A - MULTI LINK DARI CSV)
         if not df_auto.empty:
             st.info("Data Otomatis (Ujian/Evidence):")
             auto_data = []
             for _, r in df_auto.iterrows():
                 ev = parse_evidence_full(r)
                 
-                # KUMPULKAN SEMUA LINK JADI SATU LIST
+                # KUMPULKAN LINK DARI CSV
                 link_collection = []
                 if ev['ba']: link_collection.append({'label': 'BA', 'url': ev['ba'][0]['original']})
                 if ev['naskah']: link_collection.append({'label': 'Soal', 'url': ev['naskah'][0]['original']})
@@ -492,7 +513,6 @@ if df is not None:
                 if ev['penunjukan']: link_collection.append({'label': 'SK', 'url': ev['penunjukan'][0]['original']})
                 if ev['foto']: link_collection.append({'label': 'Foto', 'url': ev['foto'][0]['original']})
                 
-                # Fallback jika tidak ada link
                 if not link_collection:
                     link_collection.append({'label': '-', 'url': ''})
 
@@ -503,13 +523,13 @@ if df is not None:
 
                 auto_data.append({
                     'kategori': 'A', 'uraian': uraian_txt, 'volume': 1, 'satuan': 'Mhs', 
-                    'bukti': 'Auto', 'bukti_list': link_collection # Simpan list link
+                    'bukti': 'Auto', 'bukti_list': link_collection
                 })
             st.dataframe(pd.DataFrame(auto_data)[['uraian','volume','satuan']], use_container_width=True)
         else:
             auto_data = []
 
-        # 2. MANUAL DATA (LCKB BIDANG B/C/D - LINK FOLDER)
+        # 2. MANUAL DATA (EDITABLE)
         if st.session_state['manual_data']:
             st.warning("Data Manual:")
             df_manual = pd.DataFrame(st.session_state['manual_data'])
