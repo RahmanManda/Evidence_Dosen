@@ -15,7 +15,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Sistem LCKB & Evidence", layout="wide", page_icon="🎓")
+st.set_page_config(page_title="Sistem Admin Dosen (LCKB, LKD, E-Kinerja)", layout="wide", page_icon="🎓")
 
 # --- DATA MASTER ---
 BULAN_INDO = {
@@ -24,7 +24,7 @@ BULAN_INDO = {
 }
 
 DAFTAR_DOSEN_RESMI = [
-    "Amran Eku, M. Pd.", "Andi Nurmawaddah, M. Pd.", "Asmiraty. M.Pd.I","Dana Arif Lukmana, M. Pd.",
+    "Amran Eku, M. Pd.", "Andi Nurmawaddah, M. Pd.", "Asmiraty. M.Pd.I",
     "Dr. Andy, S.Pd.I., M.Pd.", "Dr. Kartini Limatahu, MA", "Dr. Khalid Hasan Minabari, MA.",
     "Dr. M. Ridha Assagaf, S. Ag., M.Pd.", "Dr. Mubin Noho, S.Ag., M.Ag", "Dr. Usman Ilyas, M. Pd.",
     "Dra. Nursin Sapil, M.Pd.I", "Drs. Hi Ibrahim Muhammad, M.Pd.I", "Drs. Kamarun M. Sebe, M.Pd.",
@@ -41,7 +41,7 @@ KATEGORI_LABEL = {
     'D': 'BIDANG PENUNJANG AKADEMIK'
 }
 
-# --- GOOGLE DRIVE MANAGER ---
+# --- GOOGLE DRIVE MANAGER (EXISTING - LOCKED) ---
 def get_drive_service():
     if "gcp_service_account" not in st.secrets:
         return None, "Secret 'gcp_service_account' tidak ditemukan di .streamlit/secrets.toml"
@@ -53,7 +53,6 @@ def get_drive_service():
     except Exception as e:
         return None, str(e)
 
-# FUNGSI BARU: MEMBUKA AKSES FOLDER (PUBLIC VIEW)
 def set_public_permission(service, file_id):
     try:
         service.permissions().create(
@@ -62,46 +61,28 @@ def set_public_permission(service, file_id):
             supportsAllDrives=True
         ).execute()
     except Exception:
-        # Jika gagal (misal diblokir kebijakan kampus), coba set ke domain (kampus only)
         try:
             service.permissions().create(
                 fileId=file_id,
                 body={'type': 'domain', 'role': 'reader', 'domain': 'iain-ternate.ac.id'},
                 supportsAllDrives=True
             ).execute()
-        except:
-            pass # Jika masih gagal, biarkan default
+        except: pass
 
 def get_or_create_folder(service, folder_name, parent_id):
     try:
         query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and '{parent_id}' in parents and trashed=false"
         results = service.files().list(
-            q=query, 
-            fields="files(id, webViewLink)", 
-            supportsAllDrives=True, 
-            includeItemsFromAllDrives=True
+            q=query, fields="files(id, webViewLink)", supportsAllDrives=True, includeItemsFromAllDrives=True
         ).execute()
-        
         files = results.get('files', [])
         if files: 
-            # Pastikan folder lama pun dibuka aksesnya
             set_public_permission(service, files[0]['id'])
             return files[0]['id'], files[0]['webViewLink']
         else:
-            metadata = {
-                'name': folder_name, 
-                'mimeType': 'application/vnd.google-apps.folder', 
-                'parents': [parent_id]
-            }
-            folder = service.files().create(
-                body=metadata, 
-                fields="id, webViewLink", 
-                supportsAllDrives=True
-            ).execute()
-            
-            # BUKA AKSES FOLDER BARU
+            metadata = {'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_id]}
+            folder = service.files().create(body=metadata, fields="id, webViewLink", supportsAllDrives=True).execute()
             set_public_permission(service, folder['id'])
-            
             return folder['id'], folder['webViewLink']
     except Exception as e:
         raise Exception(f"Gagal buat folder '{folder_name}': {str(e)}")
@@ -109,7 +90,6 @@ def get_or_create_folder(service, folder_name, parent_id):
 def upload_file_to_drive(file_obj, filename, dosen_name, tahun, semester, kategori, nama_kegiatan):
     service, err = get_drive_service()
     if not service: return None, err
-    
     try:
         root_id = st.secrets["target_folder_id"]
         dosen_id, _ = get_or_create_folder(service, dosen_name, root_id)
@@ -124,18 +104,12 @@ def upload_file_to_drive(file_obj, filename, dosen_name, tahun, semester, katego
         media = MediaIoBaseUpload(file_obj, mimetype=file_obj.type)
         file_meta = {'name': filename, 'parents': [kegiatan_id]}
         
-        service.files().create(
-            body=file_meta, 
-            media_body=media, 
-            fields='webViewLink', 
-            supportsAllDrives=True
-        ).execute()
-        
+        service.files().create(body=file_meta, media_body=media, fields='webViewLink', supportsAllDrives=True).execute()
         return kegiatan_link, None
     except Exception as e:
         return None, str(e)
 
-# --- FUNGSI HELPER & PARSING ---
+# --- FUNGSI HELPER & PARSING (EXISTING - LOCKED) ---
 def normalize_name(raw_name):
     if pd.isna(raw_name): return ""
     name = str(raw_name).upper()
@@ -167,7 +141,6 @@ def process_links(raw_link_str):
 
 def parse_evidence_full(row):
     jenis = str(row.get('Pilih Jenis Ujian', '')).upper()
-    
     def find_val(keywords):
         for c in row.index:
             if all(k.lower() in c.lower() for k in keywords):
@@ -180,17 +153,14 @@ def parse_evidence_full(row):
         raw_ba = find_val(['berita', 'acara', 'uas'])
         raw_foto = find_val(['foto', 'dokumentasi', 'uas'])
         raw_naskah = find_val(['naskah', 'soal'])
-    
     elif 'PROPOSAL' in jenis:
         raw_ba = find_val(['berita', 'acara', 'proposal'])
         raw_foto = find_val(['foto', 'dokumentasi', 'proposal'])
         raw_undangan = find_val(['undangan', 'proposal'])
-
     elif 'SKRIPSI' in jenis or 'MUNAQASYAH' in jenis:
         raw_ba = find_val(['berita', 'acara', 'skripsi'])
         raw_foto = find_val(['foto', 'dokumentasi', 'skripsi'])
         raw_undangan = find_val(['undangan', 'skripsi'])
-
     elif 'KOMPRE' in jenis:
         raw_ba = find_val(['berita', 'acara', 'kompre'])
         raw_foto = find_val(['foto', 'dokumentasi', 'kompre'])
@@ -219,7 +189,8 @@ def load_data(url):
         st.error(f"Error membaca CSV: {e}")
         return None, None
 
-# --- GENERATOR PDF ---
+# --- PDF/WORD GENERATORS ---
+# 1. EVIDENCE PDF (LOCKED)
 class EvidencePDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -234,7 +205,6 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
         pdf.set_font('Arial', '', 10); pdf.cell(0, 5, f'PERIODE: {periode_label.upper()}', 0, 1, 'C'); pdf.ln(8)
         pdf.set_font('Arial', '', 10); pdf.cell(30, 5, 'Nama Dosen', 0, 0); pdf.cell(5, 5, ':', 0, 0); pdf.cell(0, 5, dosen_name, 0, 1); pdf.ln(5)
 
-        # UAS
         df_uas = df_filtered[df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
         if not df_uas.empty:
             pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'A. UJIAN AKHIR SEMESTER (UAS)', 0, 1, 'L')
@@ -255,7 +225,6 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 pdf.cell(35, 8, "Buka File" if l_soal else "-", 1, 1, 'C', link=l_soal); no += 1
             pdf.ln(5)
 
-        # NON-UAS
         df_non = df_filtered[~df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
         if not df_non.empty:
             pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'B. UJIAN LAINNYA', 0, 1, 'L')
@@ -276,12 +245,11 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 pdf.cell(35, 8, "Buka File" if l_ba else "-", 1, 0, 'C', link=l_ba)
                 pdf.cell(35, 8, "Buka File" if l_surat else "-", 1, 0, 'C', link=l_surat)
                 pdf.cell(35, 8, "Buka File" if l_dok else "-", 1, 1, 'C', link=l_dok); no += 1
-
         pdf.ln(10)
         return pdf.output(dest='S').encode('latin-1', 'ignore')
     except: return None
 
-# --- GENERATOR WORD ---
+# 2. EVIDENCE WORD (LOCKED)
 def add_hyperlink(paragraph, url, text, color="0000FF", underline=True):
     part = paragraph.part; r_id = part.relate_to(url, RT.HYPERLINK, is_external=True)
     hyperlink = OxmlElement('w:hyperlink'); hyperlink.set(qn('r:id'), r_id)
@@ -334,23 +302,23 @@ def create_evidence_docx_bytes(df_filtered, dosen_name, periode_label):
                 fill_cell(rc[3], l_surat)
                 fill_cell(rc[4], ev['foto'][0]['original'] if ev['foto'] else None)
                 no += 1
-        
         f = BytesIO(); doc.save(f); return f.getvalue()
     except: return None
 
-# --- GENERATOR LCKB ---
-class LCKB_PDF(FPDF):
+# 3. GENERIC REPORT GENERATOR (FOR LCKB, LKD, E-KINERJA)
+# Fungsi ini melayani semua jenis laporan (Bulanan, Semesteran, Triwulan)
+class GenericReportPDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
         self.cell(0, 5, 'KEMENTERIAN AGAMA REPUBLIK INDONESIA', 0, 1, 'C')
         self.cell(0, 5, 'INSTITUT AGAMA ISLAM NEGERI (IAIN) TERNATE', 0, 1, 'C')
         self.ln(2); self.line(10, 22, 200, 22); self.ln(5)
 
-def create_lckb_pdf_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip_dekan):
+def create_generic_pdf_bytes(data_items, dosen_name, periode_title, nama_dekan, judul_laporan):
     try:
-        pdf = LCKB_PDF('P', 'mm', 'A4'); pdf.add_page()
-        pdf.set_font('Arial', 'B', 11); pdf.cell(0, 6, 'LAPORAN CAPAIAN KINERJA BULANAN (LCKB)', 0, 1, 'C')
-        pdf.set_font('Arial', '', 10); pdf.cell(0, 5, f'BULAN: {str(bulan).upper()} {tahun}', 0, 1, 'C'); pdf.ln(5)
+        pdf = GenericReportPDF('P', 'mm', 'A4'); pdf.add_page()
+        pdf.set_font('Arial', 'B', 11); pdf.cell(0, 6, judul_laporan.upper(), 0, 1, 'C')
+        pdf.set_font('Arial', '', 10); pdf.cell(0, 5, f'PERIODE: {periode_title.upper()}', 0, 1, 'C'); pdf.ln(5)
         pdf.cell(30, 5, 'Nama', 0, 0); pdf.cell(5, 5, ':', 0, 0); pdf.cell(0, 5, dosen_name, 0, 1); pdf.ln(5)
         pdf.set_fill_color(230, 230, 230); pdf.set_font('Arial', 'B', 9)
         cols = [('NO', 10), ('URAIAN TUGAS/KEGIATAN', 80), ('VOL', 15), ('SAT', 25), ('BUKTI FISIK (KLIK FILE)', 60)]
@@ -398,9 +366,11 @@ def create_lckb_pdf_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip_
         return pdf.output(dest='S').encode('latin-1', 'ignore')
     except: return None
 
-def create_lckb_docx_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip_dekan):
+def create_generic_docx_bytes(data_items, dosen_name, periode_title, nama_dekan, judul_laporan):
     try:
-        doc = Document(); doc.add_paragraph('LAPORAN LCKB').alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc = Document(); doc.add_paragraph(judul_laporan).alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_paragraph(f'PERIODE: {periode_title}').alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_paragraph(f'Nama Dosen: {dosen_name}\n')
         table = doc.add_table(rows=1, cols=5); table.style = 'Table Grid'
         for i, txt in enumerate(['NO', 'URAIAN', 'VOL', 'SAT', 'BUKTI FISIK']): table.rows[0].cells[i].text = txt
         
@@ -428,6 +398,7 @@ def create_lckb_docx_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip
         f = BytesIO(); doc.save(f); return f.getvalue()
     except: return None
 
+
 # --- MAIN APP ---
 url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQinSdwQBQZj649QKRimqqmTFQ0WaSlEHucehHOEg7jvTaioDXe0snCcpo3kTJJsnFrIcqEasjif9E8/pub?output=csv"
 df, target_cols = load_data(url)
@@ -436,13 +407,19 @@ if 'manual_data' not in st.session_state: st.session_state['manual_data'] = []
 if 'last_dosen' not in st.session_state: st.session_state['last_dosen'] = ""
 
 st.sidebar.title("Navigasi")
-menu = st.sidebar.radio("Menu:", ["1. Cek Evidence & Cetak", "2. Buat LCKB (Dosen)"])
+menu = st.sidebar.radio("Menu:", [
+    "1. Cek Evidence & Cetak", 
+    "2. Buat LCKB (Bulanan)",
+    "3. Buat LKD (Semester)",
+    "4. Buat E-Kinerja (Triwulan/Thn)"
+])
 nama_dekan = st.sidebar.text_input("Nama Dekan", "Dr. H. Sahjad M. Aksan, M.Phil")
 nip_dekan = st.sidebar.text_input("NIP Dekan", "19xxxxxxx")
 
 if df is not None:
     max_year = int(df['Tahun'].max()) if not df['Tahun'].isnull().all() else datetime.now().year
 
+    # --- MENU 1: EVIDENCE ---
     if menu == "1. Cek Evidence & Cetak":
         st.title("📂 Data Evidence")
         c1, c2, c3 = st.columns(3)
@@ -490,21 +467,59 @@ if df is not None:
                 c_p.download_button("📄 PDF Laporan", create_evidence_pdf_bytes(df_f, dsn, label), f"Lap_{dsn}.pdf", "application/pdf")
                 c_w.download_button("📝 Word Laporan", create_evidence_docx_bytes(df_f, dsn, label), f"Lap_{dsn}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
-    elif menu == "2. Buat LCKB (Dosen)":
-        st.title("📝 Buat LCKB (Upload ke Drive)")
+    # --- MENU LAINNYA (LCKB, LKD, E-KINERJA) ---
+    else:
+        # LOGIC UMUM UNTUK MENU 2, 3, 4
+        if menu == "2. Buat LCKB (Bulanan)":
+            st.title("📝 Buat LCKB (Bulanan)")
+            report_title = "LAPORAN CAPAIAN KINERJA BULANAN (LCKB)"
+        elif menu == "3. Buat LKD (Semester)":
+            st.title("📝 Buat LKD (Semester)")
+            report_title = "LAPORAN KINERJA DOSEN (LKD)"
+        else:
+            st.title("📝 Buat E-Kinerja (Triwulan/Tahunan)")
+            report_title = "LAPORAN E-KINERJA"
+
         c1, c2, c3 = st.columns(3)
         dsn = c1.selectbox("Dosen:", DAFTAR_DOSEN_RESMI)
+        thn = c3.number_input("Tahun", 2024, 2030, max_year)
         
         if st.session_state['last_dosen'] != dsn:
             st.session_state['manual_data'] = [] 
             st.session_state['last_dosen'] = dsn
 
-        bln = c2.selectbox("Bulan:", list(BULAN_INDO.values()))
-        thn = c3.number_input("Tahun", 2024, 2030, max_year)
-        
-        b_int = list(BULAN_INDO.keys())[list(BULAN_INDO.values()).index(bln)]
-        semester = "Semester Ganjil" if b_int >= 7 else "Semester Genap"
-        
+        # FILTER LOGIC BERDASARKAN MENU
+        bulan_filter = []
+        periode_label = ""
+        semester_upload = "Semester Ganjil" # Default untuk upload
+
+        if menu == "2. Buat LCKB (Bulanan)":
+            bln = c2.selectbox("Bulan:", list(BULAN_INDO.values()))
+            b_int = list(BULAN_INDO.keys())[list(BULAN_INDO.values()).index(bln)]
+            bulan_filter = [b_int]
+            periode_label = f"{bln.upper()} {thn}"
+            semester_upload = "Semester Ganjil" if b_int >= 7 else "Semester Genap"
+
+        elif menu == "3. Buat LKD (Semester)":
+            sem_pil = c2.selectbox("Semester:", ["Semester Ganjil (Jul-Des)", "Semester Genap (Jan-Jun)"])
+            if "Ganjil" in sem_pil:
+                bulan_filter = [7, 8, 9, 10, 11, 12]
+                periode_label = f"SEMESTER GANJIL {thn}"
+                semester_upload = "Semester Ganjil"
+            else:
+                bulan_filter = [1, 2, 3, 4, 5, 6]
+                periode_label = f"SEMESTER GENAP {thn}"
+                semester_upload = "Semester Genap"
+
+        elif menu == "4. Buat E-Kinerja (Triwulan/Thn)":
+            tw_pil = c2.selectbox("Periode:", ["Triwulan I (Jan-Mar)", "Triwulan II (Apr-Jun)", "Triwulan III (Jul-Sep)", "Triwulan IV (Okt-Des)", "Tahunan (Jan-Des)"])
+            if "Triwulan I " in tw_pil: bulan_filter = [1, 2, 3]; periode_label = f"TRIWULAN I {thn}"; semester_upload = "Semester Genap"
+            elif "Triwulan II" in tw_pil: bulan_filter = [4, 5, 6]; periode_label = f"TRIWULAN II {thn}"; semester_upload = "Semester Genap"
+            elif "Triwulan III" in tw_pil: bulan_filter = [7, 8, 9]; periode_label = f"TRIWULAN III {thn}"; semester_upload = "Semester Ganjil"
+            elif "Triwulan IV" in tw_pil: bulan_filter = [10, 11, 12]; periode_label = f"TRIWULAN IV {thn}"; semester_upload = "Semester Ganjil"
+            else: bulan_filter = list(range(1, 13)); periode_label = f"TAHUNAN {thn}"; semester_upload = "Tahunan"
+
+        # FILTER DATA
         search_name = normalize_name(dsn)
         mask = pd.Series(False, index=df.index)
         for col in target_cols:
@@ -512,10 +527,12 @@ if df is not None:
             mask |= norm_col.str.contains(search_name, case=False, regex=False)
         
         df_dosen = df[mask]
-        df_auto = df_dosen[(df_dosen['Bulan']==b_int) & (df_dosen['Tahun']==thn)]
+        df_auto = df_dosen[(df_dosen['Bulan'].isin(bulan_filter)) & (df_dosen['Tahun']==thn)]
         
-        with st.expander("➕ Tambah Kegiatan & Upload Bukti", expanded=True):
+        # FORM UPLOAD (SAMA UNTUK SEMUA)
+        with st.expander("➕ Tambah Kegiatan Manual & Upload Bukti", expanded=True):
             with st.form("upload_form"):
+                st.caption(f"File akan diupload ke folder: **{dsn}/{thn}/{semester_upload}**")
                 kat = st.selectbox("Kategori", list(KATEGORI_LABEL.keys()), format_func=lambda x:KATEGORI_LABEL[x])
                 ur = st.text_input("Uraian Kegiatan (Nama Folder)", placeholder="Contoh: Mengajar MK Fiqih Kelas A")
                 col_vol, col_sat = st.columns(2)
@@ -529,7 +546,7 @@ if df is not None:
                         folder_link, err_msg = None, None
                         if uploaded_file:
                             with st.spinner("Sedang proses upload..."):
-                                folder_link, err_msg = upload_file_to_drive(uploaded_file, uploaded_file.name, dsn, thn, semester, kat, ur)
+                                folder_link, err_msg = upload_file_to_drive(uploaded_file, uploaded_file.name, dsn, thn, semester_upload, kat, ur)
                         
                         if err_msg: st.error(f"❌ Upload Gagal: {err_msg}")
                         else:
@@ -539,10 +556,11 @@ if df is not None:
                             })
                             st.rerun()
 
-        st.divider(); st.subheader("📋 Draft Laporan")
+        st.divider(); st.subheader(f"📋 Draft {report_title}")
         
+        # 1. AUTO DATA
         if not df_auto.empty:
-            st.info(f"Data Otomatis (Ujian/Evidence) Tahun {thn}:")
+            st.info(f"Data Otomatis (Ujian/Evidence) - {len(df_auto)} Kegiatan:")
             auto_data = []
             for _, r in df_auto.iterrows():
                 ev = parse_evidence_full(r)
@@ -571,8 +589,9 @@ if df is not None:
         else:
             auto_data = []
 
+        # 2. MANUAL DATA
         if st.session_state['manual_data']:
-            st.warning("Data Manual:")
+            st.warning("Data Manual (Diedit user):")
             df_manual = pd.DataFrame(st.session_state['manual_data'])
             edited_df = st.data_editor(df_manual, num_rows="dynamic", use_container_width=True, key="editor_manual")
             if not df_manual.equals(edited_df):
@@ -583,5 +602,6 @@ if df is not None:
         if final_list:
             st.divider()
             ca, cb = st.columns(2)
-            ca.download_button("📄 PDF LCKB", create_lckb_pdf_bytes(final_list, dsn, bln, thn, nama_dekan, nip_dekan), f"LCKB_{bln}.pdf", "application/pdf")
-            cb.download_button("📝 Word LCKB", create_lckb_docx_bytes(final_list, dsn, bln, thn, nama_dekan, nip_dekan), f"LCKB_{bln}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            # GUNAKAN GENERATOR GENERIC UNTUK SEMUA JENIS LAPORAN (LCKB, LKD, EKINERJA)
+            ca.download_button("📄 PDF Laporan", create_generic_pdf_bytes(final_list, dsn, periode_label, nama_dekan, report_title), f"Laporan_{periode_label}.pdf", "application/pdf")
+            cb.download_button("📝 Word Laporan", create_generic_docx_bytes(final_list, dsn, periode_label, nama_dekan, report_title), f"Laporan_{periode_label}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
