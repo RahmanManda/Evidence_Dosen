@@ -53,6 +53,25 @@ def get_drive_service():
     except Exception as e:
         return None, str(e)
 
+# FUNGSI BARU: MEMBUKA AKSES FOLDER (PUBLIC VIEW)
+def set_public_permission(service, file_id):
+    try:
+        service.permissions().create(
+            fileId=file_id,
+            body={'type': 'anyone', 'role': 'reader'},
+            supportsAllDrives=True
+        ).execute()
+    except Exception:
+        # Jika gagal (misal diblokir kebijakan kampus), coba set ke domain (kampus only)
+        try:
+            service.permissions().create(
+                fileId=file_id,
+                body={'type': 'domain', 'role': 'reader', 'domain': 'iain-ternate.ac.id'},
+                supportsAllDrives=True
+            ).execute()
+        except:
+            pass # Jika masih gagal, biarkan default
+
 def get_or_create_folder(service, folder_name, parent_id):
     try:
         query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and '{parent_id}' in parents and trashed=false"
@@ -65,6 +84,8 @@ def get_or_create_folder(service, folder_name, parent_id):
         
         files = results.get('files', [])
         if files: 
+            # Pastikan folder lama pun dibuka aksesnya
+            set_public_permission(service, files[0]['id'])
             return files[0]['id'], files[0]['webViewLink']
         else:
             metadata = {
@@ -77,6 +98,10 @@ def get_or_create_folder(service, folder_name, parent_id):
                 fields="id, webViewLink", 
                 supportsAllDrives=True
             ).execute()
+            
+            # BUKA AKSES FOLDER BARU
+            set_public_permission(service, folder['id'])
+            
             return folder['id'], folder['webViewLink']
     except Exception as e:
         raise Exception(f"Gagal buat folder '{folder_name}': {str(e)}")
@@ -140,12 +165,10 @@ def process_links(raw_link_str):
         processed.append({'original': link, 'thumb': thumb})
     return processed
 
-# --- FUNGSI PARSING UTAMA (DIPERBAIKI SPESIFIK) ---
 def parse_evidence_full(row):
     jenis = str(row.get('Pilih Jenis Ujian', '')).upper()
     
     def find_val(keywords):
-        # Cari kolom yang mengandung SEMUA keyword
         for c in row.index:
             if all(k.lower() in c.lower() for k in keywords):
                 return row[c]
@@ -159,22 +182,19 @@ def parse_evidence_full(row):
         raw_naskah = find_val(['naskah', 'soal'])
     
     elif 'PROPOSAL' in jenis:
-        # Spesifik cari kata 'Proposal' di judul kolom
         raw_ba = find_val(['berita', 'acara', 'proposal'])
         raw_foto = find_val(['foto', 'dokumentasi', 'proposal'])
         raw_undangan = find_val(['undangan', 'proposal'])
 
     elif 'SKRIPSI' in jenis or 'MUNAQASYAH' in jenis:
-        # Spesifik cari kata 'Skripsi' di judul kolom
         raw_ba = find_val(['berita', 'acara', 'skripsi'])
         raw_foto = find_val(['foto', 'dokumentasi', 'skripsi'])
         raw_undangan = find_val(['undangan', 'skripsi'])
 
     elif 'KOMPRE' in jenis:
-        # Spesifik cari kata 'Komprehensif' di judul kolom
         raw_ba = find_val(['berita', 'acara', 'kompre'])
         raw_foto = find_val(['foto', 'dokumentasi', 'kompre'])
-        raw_penunjukan = find_val(['penunjukan', 'kompre']) # Biasanya SK/Penunjukan
+        raw_penunjukan = find_val(['penunjukan', 'kompre']) 
 
     return {
         'ba': process_links(raw_ba), 
@@ -199,7 +219,7 @@ def load_data(url):
         st.error(f"Error membaca CSV: {e}")
         return None, None
 
-# --- GENERATOR PDF (Fix Link Preview) ---
+# --- GENERATOR PDF ---
 class EvidencePDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -214,7 +234,7 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
         pdf.set_font('Arial', '', 10); pdf.cell(0, 5, f'PERIODE: {periode_label.upper()}', 0, 1, 'C'); pdf.ln(8)
         pdf.set_font('Arial', '', 10); pdf.cell(30, 5, 'Nama Dosen', 0, 0); pdf.cell(5, 5, ':', 0, 0); pdf.cell(0, 5, dosen_name, 0, 1); pdf.ln(5)
 
-        # BAGIAN 1: UAS
+        # UAS
         df_uas = df_filtered[df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
         if not df_uas.empty:
             pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'A. UJIAN AKHIR SEMESTER (UAS)', 0, 1, 'L')
@@ -228,17 +248,14 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 l_ba = ev['ba'][0]['original'] if ev['ba'] else ""
                 l_dok = ev['foto'][0]['original'] if ev['foto'] else ""
                 l_soal = ev['naskah'][0]['original'] if ev['naskah'] else ""
-                
                 if pdf.get_y() + 8 > 260: pdf.add_page()
-                pdf.cell(10, 8, str(no), 1, 0, 'C')
-                pdf.cell(75, 8, matkul[:40], 1, 0, 'L')
+                pdf.cell(10, 8, str(no), 1, 0, 'C'); pdf.cell(75, 8, matkul[:40], 1, 0, 'L')
                 pdf.cell(35, 8, "Buka File" if l_ba else "-", 1, 0, 'C', link=l_ba)
                 pdf.cell(35, 8, "Buka File" if l_dok else "-", 1, 0, 'C', link=l_dok)
-                pdf.cell(35, 8, "Buka File" if l_soal else "-", 1, 1, 'C', link=l_soal)
-                no += 1
+                pdf.cell(35, 8, "Buka File" if l_soal else "-", 1, 1, 'C', link=l_soal); no += 1
             pdf.ln(5)
 
-        # BAGIAN 2: NON-UAS
+        # NON-UAS
         df_non = df_filtered[~df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
         if not df_non.empty:
             pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'B. UJIAN LAINNYA', 0, 1, 'L')
@@ -250,20 +267,15 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 ev = parse_evidence_full(row)
                 ur = f"{row.get('Pilih Jenis Ujian')} - {row.get('Nama Lengkap Mahasiswa','-')}".encode('latin-1', 'ignore').decode('latin-1')
                 l_ba = ev['ba'][0]['original'] if ev['ba'] else ""
-                
-                # Logic Surat: Undangan atau Penunjukan
                 l_surat = ""
                 if ev['undangan']: l_surat = ev['undangan'][0]['original']
                 elif ev['penunjukan']: l_surat = ev['penunjukan'][0]['original']
-                
                 l_dok = ev['foto'][0]['original'] if ev['foto'] else ""
-                
                 if pdf.get_y() + 8 > 260: pdf.add_page()
                 pdf.cell(10, 8, str(no), 1, 0, 'C'); pdf.cell(75, 8, ur[:45], 1, 0, 'L')
                 pdf.cell(35, 8, "Buka File" if l_ba else "-", 1, 0, 'C', link=l_ba)
                 pdf.cell(35, 8, "Buka File" if l_surat else "-", 1, 0, 'C', link=l_surat)
-                pdf.cell(35, 8, "Buka File" if l_dok else "-", 1, 1, 'C', link=l_dok)
-                no += 1
+                pdf.cell(35, 8, "Buka File" if l_dok else "-", 1, 1, 'C', link=l_dok); no += 1
 
         pdf.ln(10)
         return pdf.output(dest='S').encode('latin-1', 'ignore')
@@ -315,11 +327,9 @@ def create_evidence_docx_bytes(df_filtered, dosen_name, periode_label):
             for _, row in df_non.iterrows():
                 ev = parse_evidence_full(row)
                 rc = table.add_row().cells; rc[0].text=str(no); rc[1].text=f"{row.get('Pilih Jenis Ujian')} - {row.get('Nama Lengkap Mahasiswa')}"
-                
                 l_surat = None
                 if ev['undangan']: l_surat = ev['undangan'][0]['original']
                 elif ev['penunjukan']: l_surat = ev['penunjukan'][0]['original']
-
                 fill_cell(rc[2], ev['ba'][0]['original'] if ev['ba'] else None)
                 fill_cell(rc[3], l_surat)
                 fill_cell(rc[4], ev['foto'][0]['original'] if ev['foto'] else None)
@@ -363,9 +373,7 @@ def create_lckb_pdf_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip_
                     
                     links_raw = item.get('bukti_list', [])
                     if links_raw and isinstance(links_raw, list):
-                        w_cell = 60
-                        count = len(links_raw)
-                        w_item = w_cell / count if count > 0 else 60
+                        w_cell = 60; count = len(links_raw); w_item = w_cell / count if count > 0 else 60
                         pdf.set_font('Arial', 'U', 8); pdf.set_text_color(0, 0, 255)
                         for lnk in links_raw:
                             lbl = lnk['label']; url = lnk['url']
@@ -374,8 +382,7 @@ def create_lckb_pdf_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip_
                                 pdf.set_text_color(0,0,0); pdf.set_font('Arial', '', 8)
                                 pdf.cell(w_item, 6, "-", 1, 0, 'C')
                                 pdf.set_font('Arial', 'U', 8); pdf.set_text_color(0, 0, 255)
-                        pdf.set_text_color(0, 0, 0); pdf.set_font('Arial', '', 8)
-                        pdf.ln()
+                        pdf.set_text_color(0, 0, 0); pdf.set_font('Arial', '', 8); pdf.ln()
                     else:
                         link_val = str(item['bukti']).strip()
                         txt_display = "Link Folder" if "http" in link_val else link_val
@@ -436,7 +443,6 @@ nip_dekan = st.sidebar.text_input("NIP Dekan", "19xxxxxxx")
 if df is not None:
     max_year = int(df['Tahun'].max()) if not df['Tahun'].isnull().all() else datetime.now().year
 
-    # --- MENU 1 ---
     if menu == "1. Cek Evidence & Cetak":
         st.title("📂 Data Evidence")
         c1, c2, c3 = st.columns(3)
@@ -465,8 +471,7 @@ if df is not None:
         elif mode == "Tahunan":
             df_f = df_d[df_d['Tahun']==thn]
         else: 
-            df_f = df_d
-            label = "SEMUA RIWAYAT DATA"
+            df_f = df_d; label = "SEMUA RIWAYAT DATA"
 
         st.divider(); st.write(f"Menampilkan **{len(df_f)}** data ({label})")
         tab1, tab2 = st.tabs(["Preview", "Download"])
@@ -485,7 +490,6 @@ if df is not None:
                 c_p.download_button("📄 PDF Laporan", create_evidence_pdf_bytes(df_f, dsn, label), f"Lap_{dsn}.pdf", "application/pdf")
                 c_w.download_button("📝 Word Laporan", create_evidence_docx_bytes(df_f, dsn, label), f"Lap_{dsn}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
-    # --- MENU 2 ---
     elif menu == "2. Buat LCKB (Dosen)":
         st.title("📝 Buat LCKB (Upload ke Drive)")
         c1, c2, c3 = st.columns(3)
