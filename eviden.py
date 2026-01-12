@@ -41,7 +41,7 @@ KATEGORI_LABEL = {
     'D': 'BIDANG PENUNJANG AKADEMIK'
 }
 
-# --- GOOGLE DRIVE MANAGER (UPDATED FOR SHARED DRIVE SUPPORT) ---
+# --- GOOGLE DRIVE MANAGER ---
 def get_drive_service():
     if "gcp_service_account" not in st.secrets:
         return None, "Secret 'gcp_service_account' tidak ditemukan di .streamlit/secrets.toml"
@@ -55,7 +55,6 @@ def get_drive_service():
 
 def get_or_create_folder(service, folder_name, parent_id):
     try:
-        # Tambahkan supportsAllDrives=True dan includeItemsFromAllDrives=True
         query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and '{parent_id}' in parents and trashed=false"
         results = service.files().list(
             q=query, 
@@ -73,7 +72,6 @@ def get_or_create_folder(service, folder_name, parent_id):
                 'mimeType': 'application/vnd.google-apps.folder', 
                 'parents': [parent_id]
             }
-            # Tambahkan supportsAllDrives=True saat create
             folder = service.files().create(
                 body=metadata, 
                 fields="id, webViewLink", 
@@ -89,19 +87,15 @@ def upload_file_to_drive(file_obj, filename, dosen_name, tahun, semester, katego
     
     try:
         root_id = st.secrets["target_folder_id"]
-        
-        # 1. Buat Struktur Folder (Support Shared Drive)
         dosen_id, _ = get_or_create_folder(service, dosen_name, root_id)
         tahun_id, _ = get_or_create_folder(service, str(tahun), dosen_id)
         sem_id, _ = get_or_create_folder(service, semester, tahun_id)
         kat_clean = KATEGORI_LABEL[kategori].replace("BIDANG ", "")
         kat_id, _ = get_or_create_folder(service, kat_clean, sem_id)
         
-        # 2. Buat Folder Kegiatan
         safe_kegiatan = re.sub(r'[\\/*?:"<>|]', "", nama_kegiatan)[:50] 
         kegiatan_id, kegiatan_link = get_or_create_folder(service, safe_kegiatan, kat_id)
         
-        # 3. Upload File (Support Shared Drive)
         media = MediaIoBaseUpload(file_obj, mimetype=file_obj.type)
         file_meta = {'name': filename, 'parents': [kegiatan_id]}
         
@@ -118,11 +112,15 @@ def upload_file_to_drive(file_obj, filename, dosen_name, tahun, semester, katego
 
 # --- FUNGSI HELPER & PARSING ---
 def normalize_name(raw_name):
+    """Membersihkan nama dari gelar dan tanda baca untuk pencarian yang akurat"""
     if pd.isna(raw_name): return ""
     name = str(raw_name).upper()
-    gelar_pattern = r'\b(DR|DRA|DRS|IR|S\. ?PD|M\. ?PD|S\. ?AG|M\. ?AG|S\. ?HUM|M\. ?HUM|S\. ?SI|M\. ?SI|S\. ?KOM|M\. ?KOM|PH\. ?D|M\. ?PI|S\. ?H|M\. ?H|I|II|S\. ?SOS|M\. ?SOS|M\. ?A|M\. ?PHIL|M\. ?PD\. ?I|S\. ?PD\. ?I)\b'
+    # Hapus gelar akademik umum
+    gelar_pattern = r'\b(DR|DRA|DRS|IR|S\. ?PD|M\. ?PD|S\. ?AG|M\. ?AG|S\. ?HUM|M\. ?HUM|S\. ?SI|M\. ?SI|S\. ?KOM|M\. ?KOM|PH\. ?D|M\. ?PI|S\. ?H|M\. ?H|I|II|S\. ?SOS|M\. ?SOS|M\. ?A|M\. ?PHIL|M\. ?PD\. ?I|S\. ?PD\. ?I|HI|H)\b'
     name = re.sub(gelar_pattern, '', name)
+    # Hapus titik dan koma agar "M. Sebe" sama dengan "M SEBE"
     name = re.sub(r'[.,]', ' ', name)
+    # Hapus spasi berlebih
     name = " ".join(name.split())
     return name
 
@@ -186,6 +184,7 @@ def load_data(url):
         df['Timestamp'] = pd.to_datetime(df['Timestamp'], dayfirst=True, errors='coerce')
         df['Bulan'] = df['Timestamp'].dt.month
         df['Tahun'] = df['Timestamp'].dt.year
+        
         keywords = ['dosen', 'pembimbing', 'penguji']
         target_cols = [c for c in df.columns if 'nama' in c.lower() and any(k in c.lower() for k in keywords)]
         return df, target_cols
@@ -193,7 +192,7 @@ def load_data(url):
         st.error(f"Error membaca CSV: {e}")
         return None, None
 
-# --- GENERATOR PDF EVIDENCE ---
+# --- GENERATOR PDF ---
 class EvidencePDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -208,7 +207,6 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
         pdf.set_font('Arial', '', 10); pdf.cell(0, 5, f'PERIODE: {periode_label.upper()}', 0, 1, 'C'); pdf.ln(8)
         pdf.set_font('Arial', '', 10); pdf.cell(30, 5, 'Nama Dosen', 0, 0); pdf.cell(5, 5, ':', 0, 0); pdf.cell(0, 5, dosen_name, 0, 1); pdf.ln(5)
 
-        # BAGIAN 1: UAS
         df_uas = df_filtered[df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
         if not df_uas.empty:
             pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'A. UJIAN AKHIR SEMESTER (UAS)', 0, 1, 'L')
@@ -232,7 +230,6 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 no += 1
             pdf.ln(5)
 
-        # BAGIAN 2: NON-UAS
         df_non = df_filtered[~df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
         if not df_non.empty:
             pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'B. UJIAN LAINNYA', 0, 1, 'L')
@@ -257,14 +254,10 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 no += 1
 
         pdf.ln(10)
-        if pdf.get_y() > 240: pdf.add_page()
-        pdf.set_x(120); pdf.cell(60, 5, f'Ternate, {datetime.now().strftime("%d-%m-%Y")}', 0, 1, 'C')
-        pdf.set_x(120); pdf.cell(60, 5, 'Dosen Yang Melaporkan,', 0, 1, 'C'); pdf.ln(20)
-        pdf.set_x(120); pdf.set_font('Arial', 'B', 9); pdf.cell(60, 5, dosen_name, 0, 1, 'C')
         return pdf.output(dest='S').encode('latin-1', 'ignore')
     except: return None
 
-# --- GENERATOR WORD EVIDENCE ---
+# --- GENERATOR WORD ---
 def add_hyperlink(paragraph, url, text, color="0000FF", underline=True):
     part = paragraph.part; r_id = part.relate_to(url, RT.HYPERLINK, is_external=True)
     hyperlink = OxmlElement('w:hyperlink'); hyperlink.set(qn('r:id'), r_id)
@@ -318,13 +311,10 @@ def create_evidence_docx_bytes(df_filtered, dosen_name, periode_label):
                 fill_cell(rc[4], ev['foto'][0]['original'] if ev['foto'] else None)
                 no += 1
         
-        doc.add_paragraph('\n')
-        sig = doc.add_paragraph(f'Ternate, {datetime.now().strftime("%d-%m-%Y")}\nDosen Yang Melaporkan,\n\n\n\n\n{dosen_name}')
-        sig.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         f = BytesIO(); doc.save(f); return f.getvalue()
     except: return None
 
-# --- GENERATOR LCKB (LCKB FIXES) ---
+# --- GENERATOR LCKB ---
 class LCKB_PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -357,7 +347,6 @@ def create_lckb_pdf_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip_
                     pdf.cell(10, 6, str(no), 1, 0, 'C'); pdf.cell(80, 6, desc[:50], 1, 0, 'L')
                     pdf.cell(15, 6, str(item['volume']), 1, 0, 'C'); pdf.cell(25, 6, item['satuan'], 1, 0, 'C')
                     
-                    # LOGIC PRINT LINK
                     links_raw = item.get('bukti_list', [])
                     if links_raw and isinstance(links_raw, list):
                         w_cell = 60
@@ -431,15 +420,31 @@ nama_dekan = st.sidebar.text_input("Nama Dekan", "Dr. H. Sahjad M. Aksan, M.Phil
 nip_dekan = st.sidebar.text_input("NIP Dekan", "19xxxxxxx")
 
 if df is not None:
+    # --- AUTO DETECT YEAR ---
+    max_year = int(df['Tahun'].max()) if not df['Tahun'].isnull().all() else datetime.now().year
+
     # --- MENU 1 ---
     if menu == "1. Cek Evidence & Cetak":
         st.title("📂 Data Evidence")
         c1, c2, c3 = st.columns(3)
         dsn = c1.selectbox("Dosen:", DAFTAR_DOSEN_RESMI)
         mode = c2.selectbox("Filter Waktu:", ["Bulanan", "Semester Ganjil", "Semester Genap", "Tahunan", "Semua Data"])
-        thn = c3.number_input("Tahun", 2024, 2030, datetime.now().year)
         
-        df_d = df[df.astype(str).apply(lambda x: x.str.contains(normalize_name(dsn), case=False)).any(axis=1)].copy()
+        thn = c3.number_input("Tahun", 2024, 2030, max_year)
+        
+        # --- PERBAIKAN LOGIKA SEARCH: NORMALIZE KOLOM DATA ---
+        search_name = normalize_name(dsn)
+        
+        # Buat mask untuk mencari nama di semua kolom target yang sudah di-normalize
+        mask = pd.Series(False, index=df.index)
+        for col in target_cols:
+            # Normalize isi kolom dulu sebelum dicocokkan
+            norm_col = df[col].astype(str).apply(normalize_name)
+            mask |= norm_col.str.contains(search_name, case=False, regex=False)
+        
+        # Filter berdasarkan Nama yang sudah fixed
+        df_d = df[mask].copy()
+
         label = f"TAHUN {thn}"
         if mode == "Bulanan":
             bln = st.selectbox("Bulan:", list(BULAN_INDO.values()))
@@ -451,15 +456,18 @@ if df is not None:
             df_f = df_d[(df_d['Bulan'].isin([1,2,3,4,5,6]))&(df_d['Tahun']==thn)]; label = f"SEMESTER GENAP {thn}"
         elif mode == "Tahunan":
             df_f = df_d[df_d['Tahun']==thn]
-        else: df_f = df_d; label = "SEMUA RIWAYAT DATA"
+        else: 
+            # SEMUA DATA: Ambil semua tanpa filter tahun
+            df_f = df_d
+            label = "SEMUA RIWAYAT DATA"
 
         st.divider(); st.write(f"Menampilkan **{len(df_f)}** data ({label})")
         tab1, tab2 = st.tabs(["Preview", "Download"])
         with tab1:
-            if df_f.empty: st.warning("Data Kosong")
+            if df_f.empty: st.warning("Data Kosong. Cek filter tahun atau nama dosen.")
             for _, r in df_f.iterrows():
                 ev = parse_evidence_full(r)
-                with st.expander(f"{r['Timestamp'].strftime('%d %b')} | {r.get('Pilih Jenis Ujian')} | {r.get('Nama Lengkap Mahasiswa','-')}"):
+                with st.expander(f"{r['Timestamp'].strftime('%d %b %Y')} | {r.get('Pilih Jenis Ujian')} | {r.get('Nama Lengkap Mahasiswa','-')}"):
                     ca, cb = st.columns([1,2]); 
                     if ev['foto']: ca.image([x['thumb'] for x in ev['foto'] if x['thumb']], width=100)
                     for k in ['ba','undangan','penunjukan','naskah','foto']: 
@@ -476,19 +484,25 @@ if df is not None:
         c1, c2, c3 = st.columns(3)
         dsn = c1.selectbox("Dosen:", DAFTAR_DOSEN_RESMI)
         
-        # LOGIKA RESET JIKA GANTI DOSEN (RESET FIX)
         if st.session_state['last_dosen'] != dsn:
             st.session_state['manual_data'] = [] 
             st.session_state['last_dosen'] = dsn
 
         bln = c2.selectbox("Bulan:", list(BULAN_INDO.values()))
-        thn = c3.number_input("Tahun", 2024, 2030, datetime.now().year)
+        thn = c3.number_input("Tahun", 2024, 2030, max_year)
+        
         b_int = list(BULAN_INDO.keys())[list(BULAN_INDO.values()).index(bln)]
         semester = "Semester Ganjil" if b_int >= 7 else "Semester Genap"
         
-        mask_d = pd.Series(False, index=df.index)
-        for c in target_cols: mask_d |= df[c].apply(normalize_name).str.contains(normalize_name(dsn), na=False)
-        df_auto = df[mask_d & (df['Bulan']==b_int) & (df['Tahun']==thn)]
+        # --- PERBAIKAN LOGIKA SEARCH MENU 2 ---
+        search_name = normalize_name(dsn)
+        mask = pd.Series(False, index=df.index)
+        for col in target_cols:
+            norm_col = df[col].astype(str).apply(normalize_name)
+            mask |= norm_col.str.contains(search_name, case=False, regex=False)
+        
+        df_dosen = df[mask]
+        df_auto = df_dosen[(df_dosen['Bulan']==b_int) & (df_dosen['Tahun']==thn)]
         
         with st.expander("➕ Tambah Kegiatan & Upload Bukti", expanded=True):
             with st.form("upload_form"):
@@ -499,7 +513,6 @@ if df is not None:
                 st.markdown("---")
                 uploaded_file = st.file_uploader("Upload Bukti (PDF/Gambar)")
                 
-                # UPLOAD + ERROR HANDLING (NO RERUN ON ERROR)
                 if st.form_submit_button("Simpan & Upload"):
                     if not ur: st.error("Uraian Kegiatan wajib diisi.")
                     else:
@@ -518,9 +531,8 @@ if df is not None:
 
         st.divider(); st.subheader("📋 Draft Laporan")
         
-        # 1. AUTO DATA (SATUAN FIX KELAS/MHS)
         if not df_auto.empty:
-            st.info("Data Otomatis (Ujian/Evidence):")
+            st.info(f"Data Otomatis (Ujian/Evidence) Tahun {thn}:")
             auto_data = []
             for _, r in df_auto.iterrows():
                 ev = parse_evidence_full(r)
@@ -537,7 +549,7 @@ if df is not None:
                 
                 if 'UAS' in jenis: 
                     uraian_txt = f"Menguji UAS - {r.get('Nama Matkul','-')} ({r.get('Nama Kelas','-')})"
-                    satuan_txt = "Kelas" # SATUAN FIX
+                    satuan_txt = "Kelas"
                 else: 
                     uraian_txt = f"Menguji {jenis} - {r.get('Nama Lengkap Mahasiswa','-')}"
 
@@ -549,7 +561,6 @@ if df is not None:
         else:
             auto_data = []
 
-        # 2. MANUAL DATA
         if st.session_state['manual_data']:
             st.warning("Data Manual:")
             df_manual = pd.DataFrame(st.session_state['manual_data'])
