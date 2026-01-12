@@ -74,17 +74,17 @@ def upload_file_to_drive(file_obj, filename, dosen_name, tahun, semester, katego
         safe_kegiatan = re.sub(r'[\\/*?:"<>|]', "", nama_kegiatan)[:50] 
         kegiatan_id, kegiatan_link = get_or_create_folder(service, safe_kegiatan, kat_id)
         
-        # Upload File ke dalam Folder Kegiatan
+        # Upload File
         media = MediaIoBaseUpload(file_obj, mimetype=file_obj.type)
         file_meta = {'name': filename, 'parents': [kegiatan_id]}
         service.files().create(body=file_meta, media_body=media, fields='webViewLink').execute()
         
-        # KEMBALIKAN LINK FOLDER (Agar dosen bisa copas link folder yg berisi semua file)
+        # Return Link FOLDER
         return kegiatan_link
     except Exception as e:
         st.error(f"Gagal Upload Drive: {e}"); return None
 
-# --- FUNGSI HELPER ---
+# --- FUNGSI HELPER & PARSING ---
 def normalize_name(raw_name):
     if pd.isna(raw_name): return ""
     name = str(raw_name).upper()
@@ -116,12 +116,15 @@ def process_links(raw_link_str):
 
 def parse_evidence_full(row):
     jenis = str(row.get('Pilih Jenis Ujian', ''))
+    
     def find_val(keywords):
         for c in row.index:
-            if all(k.lower() in c.lower() for k in keywords): return row[c]
+            if all(k.lower() in c.lower() for k in keywords):
+                return row[c]
         return None
 
     raw_ba = raw_foto = raw_naskah = raw_undangan = raw_penunjukan = None
+
     if 'UAS' in jenis:
         raw_ba = find_val(['berita', 'acara', 'uas'])
         raw_foto = find_val(['foto', 'dokumentasi', 'uas'])
@@ -131,13 +134,17 @@ def parse_evidence_full(row):
         raw_foto = find_val(['foto', 'dokumentasi', 'kompre'])
         raw_penunjukan = find_val(['penunjukan', 'penguji']) 
     else:
+        # Proposal/Skripsi
         raw_ba = find_val(['berita', 'acara'])
         raw_foto = find_val(['foto', 'dokumentasi'])
         raw_undangan = find_val(['undangan']) 
 
     return {
-        'ba': process_links(raw_ba), 'foto': process_links(raw_foto), 'naskah': process_links(raw_naskah),
-        'undangan': process_links(raw_undangan), 'penunjukan': process_links(raw_penunjukan)
+        'ba': process_links(raw_ba), 
+        'foto': process_links(raw_foto), 
+        'naskah': process_links(raw_naskah),
+        'undangan': process_links(raw_undangan),
+        'penunjukan': process_links(raw_penunjukan)
     }
 
 @st.cache_data
@@ -155,7 +162,7 @@ def load_data(url):
         st.error(f"Error membaca CSV: {e}")
         return None, None
 
-# --- GENERATOR PDF EVIDENCE ---
+# --- GENERATOR PDF EVIDENCE (MENU 1) ---
 class EvidencePDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -170,6 +177,7 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
         pdf.set_font('Arial', '', 10); pdf.cell(0, 5, f'PERIODE: {periode_label.upper()}', 0, 1, 'C'); pdf.ln(8)
         pdf.set_font('Arial', '', 10); pdf.cell(30, 5, 'Nama Dosen', 0, 0); pdf.cell(5, 5, ':', 0, 0); pdf.cell(0, 5, dosen_name, 0, 1); pdf.ln(5)
 
+        # UJIAN UAS
         df_uas = df_filtered[df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
         if not df_uas.empty:
             pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'A. UJIAN AKHIR SEMESTER (UAS)', 0, 1, 'L')
@@ -183,13 +191,17 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 l_ba = ev['ba'][0]['original'] if ev['ba'] else ""
                 l_dok = ev['foto'][0]['original'] if ev['foto'] else ""
                 l_soal = ev['naskah'][0]['original'] if ev['naskah'] else ""
+                
                 if pdf.get_y() + 8 > 260: pdf.add_page()
-                pdf.cell(10, 8, str(no), 1, 0, 'C'); pdf.cell(75, 8, matkul[:40], 1, 0, 'L')
+                pdf.cell(10, 8, str(no), 1, 0, 'C')
+                pdf.cell(75, 8, matkul[:40], 1, 0, 'L')
                 pdf.cell(35, 8, "Buka File" if l_ba else "-", 1, 0, 'C', link=l_ba)
                 pdf.cell(35, 8, "Buka File" if l_dok else "-", 1, 0, 'C', link=l_dok)
-                pdf.cell(35, 8, "Buka File" if l_soal else "-", 1, 1, 'C', link=l_soal); no += 1
+                pdf.cell(35, 8, "Buka File" if l_soal else "-", 1, 1, 'C', link=l_soal)
+                no += 1
             pdf.ln(5)
 
+        # UJIAN NON-UAS
         df_non = df_filtered[~df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
         if not df_non.empty:
             pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'B. UJIAN LAINNYA', 0, 1, 'L')
@@ -205,11 +217,14 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 if ev['undangan']: l_surat = ev['undangan'][0]['original']
                 elif ev['penunjukan']: l_surat = ev['penunjukan'][0]['original']
                 l_dok = ev['foto'][0]['original'] if ev['foto'] else ""
+                
                 if pdf.get_y() + 8 > 260: pdf.add_page()
-                pdf.cell(10, 8, str(no), 1, 0, 'C'); pdf.cell(75, 8, ur[:45], 1, 0, 'L')
+                pdf.cell(10, 8, str(no), 1, 0, 'C')
+                pdf.cell(75, 8, ur[:45], 1, 0, 'L')
                 pdf.cell(35, 8, "Buka File" if l_ba else "-", 1, 0, 'C', link=l_ba)
                 pdf.cell(35, 8, "Buka File" if l_surat else "-", 1, 0, 'C', link=l_surat)
-                pdf.cell(35, 8, "Buka File" if l_dok else "-", 1, 1, 'C', link=l_dok); no += 1
+                pdf.cell(35, 8, "Buka File" if l_dok else "-", 1, 1, 'C', link=l_dok)
+                no += 1
 
         pdf.ln(10)
         if pdf.get_y() > 240: pdf.add_page()
@@ -219,7 +234,7 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
         return pdf.output(dest='S').encode('latin-1', 'ignore')
     except: return None
 
-# --- GENERATOR WORD EVIDENCE ---
+# --- GENERATOR WORD EVIDENCE (MENU 1) ---
 def add_hyperlink(paragraph, url, text, color="0000FF", underline=True):
     part = paragraph.part; r_id = part.relate_to(url, RT.HYPERLINK, is_external=True)
     hyperlink = OxmlElement('w:hyperlink'); hyperlink.set(qn('r:id'), r_id)
@@ -252,7 +267,8 @@ def create_evidence_docx_bytes(df_filtered, dosen_name, periode_label):
                 rc = table.add_row().cells; rc[0].text=str(no); rc[1].text=f"{row.get('Nama Matkul','-')} ({row.get('Nama Kelas','-')})"
                 fill_cell(rc[2], ev['ba'][0]['original'] if ev['ba'] else None)
                 fill_cell(rc[3], ev['foto'][0]['original'] if ev['foto'] else None)
-                fill_cell(rc[4], ev['naskah'][0]['original'] if ev['naskah'] else None); no += 1
+                fill_cell(rc[4], ev['naskah'][0]['original'] if ev['naskah'] else None)
+                no += 1
             doc.add_paragraph('\n')
 
         df_non = df_filtered[~df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
@@ -269,7 +285,8 @@ def create_evidence_docx_bytes(df_filtered, dosen_name, periode_label):
                 elif ev['penunjukan']: l_surat = ev['penunjukan'][0]['original']
                 fill_cell(rc[2], ev['ba'][0]['original'] if ev['ba'] else None)
                 fill_cell(rc[3], l_surat)
-                fill_cell(rc[4], ev['foto'][0]['original'] if ev['foto'] else None); no += 1
+                fill_cell(rc[4], ev['foto'][0]['original'] if ev['foto'] else None)
+                no += 1
         
         doc.add_paragraph('\n')
         sig = doc.add_paragraph(f'Ternate, {datetime.now().strftime("%d-%m-%Y")}\nDosen Yang Melaporkan,\n\n\n\n\n{dosen_name}')
@@ -277,7 +294,7 @@ def create_evidence_docx_bytes(df_filtered, dosen_name, periode_label):
         f = BytesIO(); doc.save(f); return f.getvalue()
     except: return None
 
-# --- GENERATOR LCKB (Menu 2) ---
+# --- GENERATOR LCKB (MENU 2 - UPDATED NUMBERING & LINKS) ---
 class LCKB_PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -294,23 +311,32 @@ def create_lckb_pdf_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip_
         pdf.set_fill_color(230, 230, 230); pdf.set_font('Arial', 'B', 9)
         cols = [('NO', 10), ('URAIAN TUGAS/KEGIATAN', 80), ('VOL', 20), ('SATUAN', 20), ('BUKTI FISIK', 60)]
         for txt, w in cols: pdf.cell(w, 8, txt, 1, 0, 'C', 1)
-        pdf.ln(8); pdf.set_font('Arial', '', 8); no = 1
+        pdf.ln(8); pdf.set_font('Arial', '', 8)
+        
         for kat in ['A', 'B', 'C', 'D']:
             pdf.set_font('Arial', 'B', 9); pdf.cell(190, 7, f"{kat}. {KATEGORI_LABEL[kat]}", 1, 1, 'L', 1)
             pdf.set_font('Arial', '', 8)
             items = [x for x in data_items if x['kategori'] == kat]
-            if not items: pdf.cell(190, 6, " (Tidak ada kegiatan)", 1, 1, 'C')
+            
+            if not items: 
+                pdf.cell(190, 6, " (Tidak ada kegiatan)", 1, 1, 'C')
             else:
+                # RESET NOMOR PER BIDANG
+                no = 1 
                 for item in items:
                     desc = item['uraian'].encode('latin-1', 'ignore').decode('latin-1')
                     pdf.cell(10, 6, str(no), 1, 0, 'C'); pdf.cell(80, 6, desc[:50], 1, 0, 'L')
                     pdf.cell(20, 6, str(item['volume']), 1, 0, 'C'); pdf.cell(20, 6, item['satuan'], 1, 0, 'C')
                     
-                    # LOGIC BARU: PASTIKAN LINK MUNCUL
-                    link_val = item['bukti']
-                    txt_display = "Buka Link Folder" if "http" in str(link_val) else str(link_val)
-                    pdf.cell(60, 6, txt_display, 1, 1, 'C', link=link_val if "http" in str(link_val) else "")
+                    # LOGIC LINK (Memastikan link muncul)
+                    link_val = str(item['bukti']).strip()
+                    txt_display = "Buka Link Folder" if "http" in link_val else link_val
+                    if "http" in link_val:
+                         pdf.cell(60, 6, txt_display, 1, 1, 'C', link=link_val)
+                    else:
+                         pdf.cell(60, 6, txt_display, 1, 1, 'C')
                     no += 1
+        
         pdf.ln(10); y = pdf.get_y(); pdf.set_xy(20, y); pdf.cell(60, 5, "Mengetahui, Dekan FTIK,", 0, 0, 'C')
         pdf.set_xy(120, y); pdf.cell(60, 5, f'Ternate, {datetime.now().strftime("%d-%m-%Y")}', 0, 1, 'C')
         pdf.set_x(120); pdf.cell(60, 5, 'Yang Melaporkan,', 0, 1, 'C'); pdf.ln(15)
@@ -324,13 +350,18 @@ def create_lckb_docx_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip
         doc = Document(); doc.add_paragraph('LAPORAN LCKB').alignment = WD_ALIGN_PARAGRAPH.CENTER
         table = doc.add_table(rows=1, cols=5); table.style = 'Table Grid'
         for i, txt in enumerate(['NO', 'URAIAN', 'VOL', 'SAT', 'BUKTI']): table.rows[0].cells[i].text = txt
-        no = 1
+        
         for kat in ['A', 'B', 'C', 'D']:
             row = table.add_row().cells; row[0].merge(row[4]); row[0].text = f"{kat}. {KATEGORI_LABEL[kat]}"
+            # RESET NOMOR PER BIDANG
+            no = 1
             for it in [x for x in data_items if x['kategori'] == kat]:
                 cells = table.add_row().cells; cells[0].text, cells[1].text, cells[2].text, cells[3].text = str(no), it['uraian'], str(it['volume']), it['satuan']
-                if "http" in str(it['bukti']): add_hyperlink(cells[4].add_paragraph(), it['bukti'], "Buka Link")
-                else: cells[4].text = str(it['bukti'])
+                
+                # LOGIC LINK
+                link_val = str(it['bukti']).strip()
+                if "http" in link_val: add_hyperlink(cells[4].add_paragraph(), link_val, "Buka Link")
+                else: cells[4].text = link_val
                 no += 1
         f = BytesIO(); doc.save(f); return f.getvalue()
     except: return None
@@ -346,6 +377,7 @@ nama_dekan = st.sidebar.text_input("Nama Dekan", "Dr. H. Sahjad M. Aksan, M.Phil
 nip_dekan = st.sidebar.text_input("NIP Dekan", "19xxxxxxx")
 
 if df is not None:
+    # --- MENU 1 (LOCKED & PERFECT) ---
     if menu == "1. Cek Evidence & Cetak":
         st.title("📂 Data Evidence")
         c1, c2, c3 = st.columns(3)
@@ -384,6 +416,7 @@ if df is not None:
                 c_p.download_button("📄 PDF Laporan", create_evidence_pdf_bytes(df_f, dsn, label), f"Lap_{dsn}.pdf", "application/pdf")
                 c_w.download_button("📝 Word Laporan", create_evidence_docx_bytes(df_f, dsn, label), f"Lap_{dsn}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
+    # --- MENU 2: LCKB (UPDATED: EDITABLE TABLE & LINK FIX) ---
     elif menu == "2. Buat LCKB (Dosen)":
         st.title("📝 Buat LCKB (Upload ke Drive)")
         st.caption("Semua file yang diupload disini otomatis masuk ke Google Drive dengan folder rapi.")
@@ -409,7 +442,7 @@ if df is not None:
                 col_vol, col_sat = st.columns(2)
                 vol = col_vol.number_input("Volume", 1); sat = col_sat.text_input("Satuan", "SKS/Kegiatan")
                 
-                # UPLOAD SIMPEL (SINGLE BUTTON)
+                # UPLOAD SIMPEL
                 st.markdown("---")
                 uploaded_file = st.file_uploader("Upload Bukti (PDF/Gambar)")
                 
@@ -419,21 +452,44 @@ if df is not None:
                         folder_link = "-"
                         if uploaded_file:
                             with st.spinner("Sedang proses upload..."):
-                                # Upload file dan ambil link foldernya
                                 folder_link = upload_file_to_drive(uploaded_file, uploaded_file.name, dsn, thn, semester, kat, ur)
                                 if folder_link: st.success("✅ Berhasil Upload!")
                         
                         st.session_state['manual_data'].append({
-                            'kategori': kat, 'uraian': ur, 'volume': vol, 'satuan': sat, 'bukti': folder_link
+                            'kategori': kat, 'uraian': ur, 'volume': vol, 'satuan': sat, 'bukti': folder_link if folder_link else "-"
                         })
                         st.rerun()
 
-        final = [{'kategori':'A', 'uraian':f"Menguji {r.get('Pilih Jenis Ujian')} - {r.get('Nama Lengkap Mahasiswa')}", 'volume':1, 'satuan':'Mhs', 'bukti':'-'} for _, r in df_auto.iterrows()] + st.session_state['manual_data']
+        # BAGIAN EDIT/HAPUS (FITUR BARU)
+        st.divider()
+        st.subheader("📋 Draft Laporan")
         
-        if final:
-            st.write("📋 **Draft Laporan LCKB:**")
-            st.table(final)
-            if st.button("Hapus Draft"): st.session_state['manual_data']=[]; st.rerun()
+        # 1. Tampilkan Data Otomatis (Read Only)
+        if not df_auto.empty:
+            st.info("Data di bawah ini ditarik otomatis dari sistem Ujian (Tidak bisa diedit disini).")
+            auto_data = [{'kategori':'A', 'uraian':f"Menguji {r.get('Pilih Jenis Ujian')} - {r.get('Nama Lengkap Mahasiswa')}", 'volume':1, 'satuan':'Mhs', 'bukti':'-'} for _, r in df_auto.iterrows()]
+            st.dataframe(auto_data, use_container_width=True)
+        else:
+            auto_data = []
+
+        # 2. Tampilkan Data Manual (BISA DIEDIT/HAPUS)
+        if st.session_state['manual_data']:
+            st.warning("Data di bawah ini adalah inputan manual Anda. Silakan Edit/Hapus jika perlu.")
+            df_manual = pd.DataFrame(st.session_state['manual_data'])
+            
+            # EDITOR INTERAKTIF
+            edited_df = st.data_editor(df_manual, num_rows="dynamic", use_container_width=True, key="editor_manual")
+            
+            # SIMPAN PERUBAHAN
+            if not df_manual.equals(edited_df):
+                st.session_state['manual_data'] = edited_df.to_dict('records')
+                st.rerun()
+        
+        # Gabung Data untuk Cetak
+        final_list = auto_data + st.session_state['manual_data']
+        
+        if final_list:
+            st.divider()
             ca, cb = st.columns(2)
-            ca.download_button("📄 PDF LCKB", create_lckb_pdf_bytes(final, dsn, bln, thn, nama_dekan, nip_dekan), f"LCKB_{bln}.pdf", "application/pdf")
-            cb.download_button("📝 Word LCKB", create_lckb_docx_bytes(final, dsn, bln, thn, nama_dekan, nip_dekan), f"LCKB_{bln}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            ca.download_button("📄 PDF LCKB", create_lckb_pdf_bytes(final_list, dsn, bln, thn, nama_dekan, nip_dekan), f"LCKB_{bln}.pdf", "application/pdf")
+            cb.download_button("📝 Word LCKB", create_lckb_docx_bytes(final_list, dsn, bln, thn, nama_dekan, nip_dekan), f"LCKB_{bln}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
