@@ -65,23 +65,19 @@ def upload_file_to_drive(file_obj, filename, dosen_name, tahun, semester, katego
         if not service: return None, None
         root_id = st.secrets["target_folder_id"]
         
-        # 1. Buat Struktur Folder
         dosen_id, _ = get_or_create_folder(service, dosen_name, root_id)
         tahun_id, _ = get_or_create_folder(service, str(tahun), dosen_id)
         sem_id, _ = get_or_create_folder(service, semester, tahun_id)
         kat_clean = KATEGORI_LABEL[kategori].replace("BIDANG ", "")
         kat_id, _ = get_or_create_folder(service, kat_clean, sem_id)
         
-        # 2. Buat Folder Kegiatan (Link ini yang diambil)
         safe_kegiatan = re.sub(r'[\\/*?:"<>|]', "", nama_kegiatan)[:50] 
         kegiatan_id, kegiatan_link = get_or_create_folder(service, safe_kegiatan, kat_id)
         
-        # 3. Upload File ke dalam Folder Kegiatan
         media = MediaIoBaseUpload(file_obj, mimetype=file_obj.type)
         file_meta = {'name': filename, 'parents': [kegiatan_id]}
         service.files().create(body=file_meta, media_body=media, fields='webViewLink').execute()
         
-        # RETURN LINK FOLDER (Sesuai permintaan)
         return kegiatan_link
     except Exception as e:
         st.error(f"Gagal Upload Drive: {e}"); return None
@@ -192,11 +188,14 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 l_ba = ev['ba'][0]['original'] if ev['ba'] else ""
                 l_dok = ev['foto'][0]['original'] if ev['foto'] else ""
                 l_soal = ev['naskah'][0]['original'] if ev['naskah'] else ""
+                
                 if pdf.get_y() + 8 > 260: pdf.add_page()
-                pdf.cell(10, 8, str(no), 1, 0, 'C'); pdf.cell(75, 8, matkul[:40], 1, 0, 'L')
+                pdf.cell(10, 8, str(no), 1, 0, 'C')
+                pdf.cell(75, 8, matkul[:40], 1, 0, 'L')
                 pdf.cell(35, 8, "Buka File" if l_ba else "-", 1, 0, 'C', link=l_ba)
                 pdf.cell(35, 8, "Buka File" if l_dok else "-", 1, 0, 'C', link=l_dok)
-                pdf.cell(35, 8, "Buka File" if l_soal else "-", 1, 1, 'C', link=l_soal); no += 1
+                pdf.cell(35, 8, "Buka File" if l_soal else "-", 1, 1, 'C', link=l_soal)
+                no += 1
             pdf.ln(5)
 
         # BAGIAN 2: NON-UAS
@@ -215,11 +214,13 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 if ev['undangan']: l_surat = ev['undangan'][0]['original']
                 elif ev['penunjukan']: l_surat = ev['penunjukan'][0]['original']
                 l_dok = ev['foto'][0]['original'] if ev['foto'] else ""
+                
                 if pdf.get_y() + 8 > 260: pdf.add_page()
                 pdf.cell(10, 8, str(no), 1, 0, 'C'); pdf.cell(75, 8, ur[:45], 1, 0, 'L')
                 pdf.cell(35, 8, "Buka File" if l_ba else "-", 1, 0, 'C', link=l_ba)
                 pdf.cell(35, 8, "Buka File" if l_surat else "-", 1, 0, 'C', link=l_surat)
-                pdf.cell(35, 8, "Buka File" if l_dok else "-", 1, 1, 'C', link=l_dok); no += 1
+                pdf.cell(35, 8, "Buka File" if l_dok else "-", 1, 1, 'C', link=l_dok)
+                no += 1
 
         pdf.ln(10)
         if pdf.get_y() > 240: pdf.add_page()
@@ -289,7 +290,7 @@ def create_evidence_docx_bytes(df_filtered, dosen_name, periode_label):
         f = BytesIO(); doc.save(f); return f.getvalue()
     except: return None
 
-# --- GENERATOR LCKB (MENU 2 - NUMBERING RESET & LINK FOLDER) ---
+# --- GENERATOR LCKB (MENU 2 - FIX TOTAL) ---
 class LCKB_PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -304,7 +305,7 @@ def create_lckb_pdf_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip_
         pdf.set_font('Arial', '', 10); pdf.cell(0, 5, f'BULAN: {str(bulan).upper()} {tahun}', 0, 1, 'C'); pdf.ln(5)
         pdf.cell(30, 5, 'Nama', 0, 0); pdf.cell(5, 5, ':', 0, 0); pdf.cell(0, 5, dosen_name, 0, 1); pdf.ln(5)
         pdf.set_fill_color(230, 230, 230); pdf.set_font('Arial', 'B', 9)
-        cols = [('NO', 10), ('URAIAN TUGAS/KEGIATAN', 80), ('VOL', 20), ('SATUAN', 20), ('BUKTI FISIK', 60)]
+        cols = [('NO', 10), ('URAIAN TUGAS/KEGIATAN', 80), ('VOL', 15), ('SAT', 25), ('BUKTI FISIK (KLIK FILE)', 60)]
         for txt, w in cols: pdf.cell(w, 8, txt, 1, 0, 'C', 1)
         pdf.ln(8); pdf.set_font('Arial', '', 8)
         
@@ -316,20 +317,36 @@ def create_lckb_pdf_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip_
             if not items: 
                 pdf.cell(190, 6, " (Tidak ada kegiatan)", 1, 1, 'C')
             else:
-                # RESET NOMOR PER BIDANG (1, 2, 3...)
                 no = 1 
                 for item in items:
                     desc = item['uraian'].encode('latin-1', 'ignore').decode('latin-1')
                     pdf.cell(10, 6, str(no), 1, 0, 'C'); pdf.cell(80, 6, desc[:50], 1, 0, 'L')
-                    pdf.cell(20, 6, str(item['volume']), 1, 0, 'C'); pdf.cell(20, 6, item['satuan'], 1, 0, 'C')
+                    pdf.cell(15, 6, str(item['volume']), 1, 0, 'C'); pdf.cell(25, 6, item['satuan'], 1, 0, 'C')
                     
-                    # LINK FOLDER
-                    link_val = str(item['bukti']).strip()
-                    txt_display = "Link Folder" if "http" in link_val else link_val
-                    if "http" in link_val:
-                         pdf.cell(60, 6, txt_display, 1, 1, 'C', link=link_val)
+                    # LOGIC CETAK LINK CERDAS
+                    links_raw = item.get('bukti_list', []) # Ambil list link khusus jika ada
+                    if links_raw and isinstance(links_raw, list):
+                        # Cetak multi-cell jika link banyak (Untuk Bidang A CSV)
+                        x_start = pdf.get_x(); y_start = pdf.get_y()
+                        
+                        # Loop link ke samping
+                        w_link = 60 / len(links_raw)
+                        for lnk in links_raw:
+                            lbl = lnk['label']
+                            url = lnk['url']
+                            pdf.set_font('Arial', 'U', 8); pdf.set_text_color(0, 0, 255)
+                            pdf.cell(w_link, 6, lbl, 1, 0, 'C', link=url)
+                        pdf.set_text_color(0, 0, 0); pdf.set_font('Arial', '', 8)
+                        pdf.ln()
+
                     else:
-                         pdf.cell(60, 6, txt_display, 1, 1, 'C')
+                        # Logic Manual / Single Link
+                        link_val = str(item['bukti']).strip()
+                        txt_display = "Folder Kegiatan" if "http" in link_val else link_val
+                        if "http" in link_val:
+                             pdf.cell(60, 6, txt_display, 1, 1, 'C', link=link_val)
+                        else:
+                             pdf.cell(60, 6, txt_display, 1, 1, 'C')
                     no += 1
         
         pdf.ln(10); y = pdf.get_y(); pdf.set_xy(20, y); pdf.cell(60, 5, "Mengetahui, Dekan FTIK,", 0, 0, 'C')
@@ -344,19 +361,26 @@ def create_lckb_docx_bytes(data_items, dosen_name, bulan, tahun, nama_dekan, nip
     try:
         doc = Document(); doc.add_paragraph('LAPORAN LCKB').alignment = WD_ALIGN_PARAGRAPH.CENTER
         table = doc.add_table(rows=1, cols=5); table.style = 'Table Grid'
-        for i, txt in enumerate(['NO', 'URAIAN', 'VOL', 'SAT', 'BUKTI']): table.rows[0].cells[i].text = txt
+        for i, txt in enumerate(['NO', 'URAIAN', 'VOL', 'SAT', 'BUKTI FISIK']): table.rows[0].cells[i].text = txt
         
         for kat in ['A', 'B', 'C', 'D']:
             row = table.add_row().cells; row[0].merge(row[4]); row[0].text = f"{kat}. {KATEGORI_LABEL[kat]}"
-            # RESET NOMOR PER BIDANG
             no = 1
             for it in [x for x in data_items if x['kategori'] == kat]:
                 cells = table.add_row().cells; cells[0].text, cells[1].text, cells[2].text, cells[3].text = str(no), it['uraian'], str(it['volume']), it['satuan']
                 
-                # LINK FOLDER
-                link_val = str(it['bukti']).strip()
-                if "http" in link_val: add_hyperlink(cells[4].add_paragraph(), link_val, "Link Folder")
-                else: cells[4].text = link_val
+                # Logic Word Cerdas
+                links_raw = it.get('bukti_list', [])
+                cell_bukti = cells[4]
+                if links_raw and isinstance(links_raw, list):
+                    p = cell_bukti.paragraphs[0]
+                    for i, lnk in enumerate(links_raw):
+                        add_hyperlink(p, lnk['url'], lnk['label'])
+                        if i < len(links_raw) - 1: p.add_run(" | ")
+                else:
+                    link_val = str(it['bukti']).strip()
+                    if "http" in link_val: add_hyperlink(cell_bukti.paragraphs[0], link_val, "Folder Kegiatan")
+                    else: cell_bukti.text = link_val
                 no += 1
         f = BytesIO(); doc.save(f); return f.getvalue()
     except: return None
@@ -372,7 +396,7 @@ nama_dekan = st.sidebar.text_input("Nama Dekan", "Dr. H. Sahjad M. Aksan, M.Phil
 nip_dekan = st.sidebar.text_input("NIP Dekan", "19xxxxxxx")
 
 if df is not None:
-    # --- MENU 1 (LOCKED & PERFECT) ---
+    # --- MENU 1 (EVIDENCE) ---
     if menu == "1. Cek Evidence & Cetak":
         st.title("📂 Data Evidence")
         c1, c2, c3 = st.columns(3)
@@ -411,7 +435,7 @@ if df is not None:
                 c_p.download_button("📄 PDF Laporan", create_evidence_pdf_bytes(df_f, dsn, label), f"Lap_{dsn}.pdf", "application/pdf")
                 c_w.download_button("📝 Word Laporan", create_evidence_docx_bytes(df_f, dsn, label), f"Lap_{dsn}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
-    # --- MENU 2: LCKB (FIXED LINKS & FOLDER LINK) ---
+    # --- MENU 2: LCKB (FIXED TOTAL) ---
     elif menu == "2. Buat LCKB (Dosen)":
         st.title("📝 Buat LCKB (Upload ke Drive)")
         st.caption("Semua file yang diupload disini otomatis masuk ke Google Drive dengan folder rapi.")
@@ -424,24 +448,19 @@ if df is not None:
         b_int = list(BULAN_INDO.keys())[list(BULAN_INDO.values()).index(bln)]
         semester = "Semester Ganjil" if b_int >= 7 else "Semester Genap"
         
-        # FILTER AUTO DATA
         mask_d = pd.Series(False, index=df.index)
         for c in target_cols: mask_d |= df[c].apply(normalize_name).str.contains(normalize_name(dsn), na=False)
         df_auto = df[mask_d & (df['Bulan']==b_int) & (df['Tahun']==thn)]
         
         with st.expander("➕ Tambah Kegiatan & Upload Bukti", expanded=True):
             st.write(f"**Penyimpanan Drive:** {dsn} > {thn} > {semester}")
-            
             with st.form("upload_form"):
                 kat = st.selectbox("Kategori", list(KATEGORI_LABEL.keys()), format_func=lambda x:KATEGORI_LABEL[x])
                 ur = st.text_input("Uraian Kegiatan (Nama Folder)", placeholder="Contoh: Mengajar MK Fiqih Kelas A")
                 col_vol, col_sat = st.columns(2)
                 vol = col_vol.number_input("Volume", 1); sat = col_sat.text_input("Satuan", "SKS/Kegiatan")
-                
-                # UPLOAD SIMPEL
                 st.markdown("---")
                 uploaded_file = st.file_uploader("Upload Bukti (PDF/Gambar)")
-                
                 if st.form_submit_button("Simpan & Upload"):
                     if not ur: st.error("Uraian Kegiatan wajib diisi.")
                     else:
@@ -456,56 +475,50 @@ if df is not None:
                         })
                         st.rerun()
 
-        # BAGIAN EDIT/HAPUS & AUTO DATA LINK FIX
-        st.divider()
-        st.subheader("📋 Draft Laporan")
+        st.divider(); st.subheader("📋 Draft Laporan")
         
-        # 1. AUTO DATA (READ-ONLY tapi LINKNYA SUDAH DIPERBAIKI)
+        # 1. AUTO DATA (LCKB BIDANG A - SESUAI KOLOM EVIDENCE)
         if not df_auto.empty:
-            st.info("Data Otomatis (UAS/Evidence):")
+            st.info("Data Otomatis (Ujian/Evidence):")
             auto_data = []
             for _, r in df_auto.iterrows():
-                # AMBIL LINK DARI EVIDENCE (Logic Perbaikan)
                 ev = parse_evidence_full(r)
-                link_ev = "-"
-                # Prioritas link: BA -> Foto -> Naskah -> Undangan -> Penunjukan
-                if ev['ba']: link_ev = ev['ba'][0]['original']
-                elif ev['foto']: link_ev = ev['foto'][0]['original']
-                elif ev['naskah']: link_ev = ev['naskah'][0]['original']
-                elif ev['undangan']: link_ev = ev['undangan'][0]['original']
-                elif ev['penunjukan']: link_ev = ev['penunjukan'][0]['original']
                 
+                # KUMPULKAN SEMUA LINK JADI SATU LIST
+                link_collection = []
+                if ev['ba']: link_collection.append({'label': 'BA', 'url': ev['ba'][0]['original']})
+                if ev['naskah']: link_collection.append({'label': 'Soal', 'url': ev['naskah'][0]['original']})
+                if ev['undangan']: link_collection.append({'label': 'Undangan', 'url': ev['undangan'][0]['original']})
+                if ev['penunjukan']: link_collection.append({'label': 'SK', 'url': ev['penunjukan'][0]['original']})
+                if ev['foto']: link_collection.append({'label': 'Foto', 'url': ev['foto'][0]['original']})
+                
+                # Fallback jika tidak ada link
+                if not link_collection:
+                    link_collection.append({'label': '-', 'url': ''})
+
                 uraian_txt = ""
                 jenis = str(r.get('Pilih Jenis Ujian', ''))
-                if 'UAS' in jenis:
-                    uraian_txt = f"Menguji UAS - {r.get('Nama Matkul','-')} ({r.get('Nama Kelas','-')})"
-                else:
-                    uraian_txt = f"Menguji {jenis} - {r.get('Nama Lengkap Mahasiswa','-')}"
+                if 'UAS' in jenis: uraian_txt = f"Menguji UAS - {r.get('Nama Matkul','-')} ({r.get('Nama Kelas','-')})"
+                else: uraian_txt = f"Menguji {jenis} - {r.get('Nama Lengkap Mahasiswa','-')}"
 
                 auto_data.append({
-                    'kategori': 'A', 
-                    'uraian': uraian_txt, 
-                    'volume': 1, 
-                    'satuan': 'Mhs', 
-                    'bukti': link_ev
+                    'kategori': 'A', 'uraian': uraian_txt, 'volume': 1, 'satuan': 'Mhs', 
+                    'bukti': 'Auto', 'bukti_list': link_collection # Simpan list link
                 })
-            st.dataframe(auto_data, use_container_width=True)
+            st.dataframe(pd.DataFrame(auto_data)[['uraian','volume','satuan']], use_container_width=True)
         else:
             auto_data = []
 
-        # 2. MANUAL DATA (EDITABLE)
+        # 2. MANUAL DATA (LCKB BIDANG B/C/D - LINK FOLDER)
         if st.session_state['manual_data']:
-            st.warning("Data Manual (Bisa Diedit/Hapus):")
+            st.warning("Data Manual:")
             df_manual = pd.DataFrame(st.session_state['manual_data'])
             edited_df = st.data_editor(df_manual, num_rows="dynamic", use_container_width=True, key="editor_manual")
-            
             if not df_manual.equals(edited_df):
                 st.session_state['manual_data'] = edited_df.to_dict('records')
                 st.rerun()
         
-        # GABUNG & CETAK
         final_list = auto_data + st.session_state['manual_data']
-        
         if final_list:
             st.divider()
             ca, cb = st.columns(2)
