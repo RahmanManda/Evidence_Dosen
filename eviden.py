@@ -8,7 +8,7 @@ from docx import Document
 from docx.shared import Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.oxml import OxmlElement # Import PENTING yang tadi kurang
+from docx.oxml import OxmlElement 
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
 # --- KONFIGURASI HALAMAN ---
@@ -110,89 +110,87 @@ class EvidencePDF(FPDF):
         self.ln(2); self.line(10, 22, 200, 22); self.ln(5)
 
 def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
-    pdf = EvidencePDF('P', 'mm', 'A4')
-    pdf.add_page()
-    pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 6, 'LAPORAN BUKTI FISIK PELAKSANAAN UJIAN', 0, 1, 'C')
-    pdf.set_font('Arial', '', 10)
-    pdf.cell(0, 5, f'PERIODE: {periode_label.upper()}', 0, 1, 'C'); pdf.ln(8)
-    pdf.set_font('Arial', '', 10)
-    pdf.cell(30, 5, 'Nama Dosen', 0, 0); pdf.cell(5, 5, ':', 0, 0); pdf.cell(0, 5, dosen_name, 0, 1)
-    pdf.ln(5)
-
-    # BAGIAN 1: UAS
-    df_uas = df_filtered[df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
-    if not df_uas.empty:
-        pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'A. UJIAN AKHIR SEMESTER (UAS)', 0, 1, 'L')
-        pdf.set_fill_color(230, 230, 230); pdf.set_font('Arial', 'B', 8)
-        cols = [('NO', 10), ('MATA KULIAH / KELAS', 70), ('BERITA ACARA', 35), ('DOKUMENTASI', 35), ('NASKAH SOAL', 35)]
-        for txt, w in cols: pdf.cell(w, 8, txt, 1, 0, 'C', 1)
-        pdf.ln(); pdf.set_font('Arial', '', 8)
-        no = 1
-        for _, row in df_uas.iterrows():
-            ev = parse_evidence_full(row)
-            matkul = f"{row.get('Nama Matkul','-')} ({row.get('Nama Kelas','-')})"
-            link_ba = ev['ba'][0]['original'] if ev['ba'] else ""
-            link_dok = ev['foto'][0]['original'] if ev['foto'] else ""
-            link_soal = ev['naskah'][0]['original'] if ev['naskah'] else ""
-            h = 8
-            if pdf.get_y() + h > 260: pdf.add_page()
-            pdf.cell(10, h, str(no), 1, 0, 'C')
-            pdf.cell(70, h, matkul[:40], 1, 0, 'L')
-            x=pdf.get_x(); y=pdf.get_y()
-            pdf.cell(35, h, "Buka File" if link_ba else "-", 1, 0, 'C', link=link_ba)
-            pdf.cell(35, h, "Buka File" if link_dok else "-", 1, 0, 'C', link=link_dok)
-            pdf.cell(35, h, "Buka File" if link_soal else "-", 1, 1, 'C', link=link_soal)
-            no += 1
+    try:
+        pdf = EvidencePDF('P', 'mm', 'A4')
+        pdf.add_page()
+        pdf.set_font('Arial', 'B', 11)
+        pdf.cell(0, 6, 'LAPORAN BUKTI FISIK PELAKSANAAN UJIAN', 0, 1, 'C')
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(0, 5, f'PERIODE: {periode_label.upper()}', 0, 1, 'C'); pdf.ln(8)
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(30, 5, 'Nama Dosen', 0, 0); pdf.cell(5, 5, ':', 0, 0); pdf.cell(0, 5, dosen_name, 0, 1)
         pdf.ln(5)
 
-    # BAGIAN 2: NON-UAS
-    df_non_uas = df_filtered[~df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
-    if not df_non_uas.empty:
-        pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'B. UJIAN SKRIPSI / PROPOSAL / KOMPREHENSIF', 0, 1, 'L')
-        pdf.set_fill_color(230, 230, 230); pdf.set_font('Arial', 'B', 8)
-        cols = [('NO', 10), ('URAIAN KEGIATAN', 90), ('BERITA ACARA', 40), ('DOKUMENTASI', 40)]
-        for txt, w in cols: pdf.cell(w, 8, txt, 1, 0, 'C', 1)
-        pdf.ln(); pdf.set_font('Arial', '', 8)
-        no = 1
-        for _, row in df_non_uas.iterrows():
-            ev = parse_evidence_full(row)
-            uraian = f"{row.get('Pilih Jenis Ujian')} - {row.get('Nama Lengkap Mahasiswa','-')}"
-            link_ba = ev['ba'][0]['original'] if ev['ba'] else ""
-            link_dok = ev['foto'][0]['original'] if ev['foto'] else ""
-            h = 8
-            if pdf.get_y() + h > 260: pdf.add_page()
-            pdf.cell(10, h, str(no), 1, 0, 'C')
-            pdf.cell(90, h, uraian[:55], 1, 0, 'L')
-            pdf.cell(40, h, "Buka File" if link_ba else "-", 1, 0, 'C', link=link_ba)
-            pdf.cell(40, h, "Buka File" if link_dok else "-", 1, 1, 'C', link=link_dok)
-            no += 1
+        # BAGIAN 1: UAS
+        df_uas = df_filtered[df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
+        if not df_uas.empty:
+            pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'A. UJIAN AKHIR SEMESTER (UAS)', 0, 1, 'L')
+            pdf.set_fill_color(230, 230, 230); pdf.set_font('Arial', 'B', 8)
+            cols = [('NO', 10), ('MATA KULIAH / KELAS', 70), ('BERITA ACARA', 35), ('DOKUMENTASI', 35), ('NASKAH SOAL', 35)]
+            for txt, w in cols: pdf.cell(w, 8, txt, 1, 0, 'C', 1)
+            pdf.ln(); pdf.set_font('Arial', '', 8)
+            no = 1
+            for _, row in df_uas.iterrows():
+                ev = parse_evidence_full(row)
+                matkul = f"{row.get('Nama Matkul','-')} ({row.get('Nama Kelas','-')})"
+                link_ba = ev['ba'][0]['original'] if ev['ba'] else ""
+                link_dok = ev['foto'][0]['original'] if ev['foto'] else ""
+                link_soal = ev['naskah'][0]['original'] if ev['naskah'] else ""
+                
+                # Encode text
+                matkul = matkul.encode('latin-1', 'ignore').decode('latin-1')
 
-    pdf.ln(10)
-    if pdf.get_y() > 240: pdf.add_page()
-    pdf.set_x(120); pdf.cell(60, 5, f'Ternate, {datetime.now().strftime("%d-%m-%Y")}', 0, 1, 'C')
-    pdf.set_x(120); pdf.cell(60, 5, 'Dosen Yang Melaporkan,', 0, 1, 'C'); pdf.ln(20)
-    pdf.set_x(120); pdf.set_font('Arial', 'B', 9); pdf.cell(60, 5, dosen_name, 0, 1, 'C')
-    return pdf.output(dest='S').encode('latin-1', 'ignore')
+                h = 8
+                if pdf.get_y() + h > 260: pdf.add_page()
+                pdf.cell(10, h, str(no), 1, 0, 'C')
+                pdf.cell(70, h, matkul[:40], 1, 0, 'L')
+                x=pdf.get_x(); y=pdf.get_y()
+                pdf.cell(35, h, "Buka File" if link_ba else "-", 1, 0, 'C', link=link_ba)
+                pdf.cell(35, h, "Buka File" if link_dok else "-", 1, 0, 'C', link=link_dok)
+                pdf.cell(35, h, "Buka File" if link_soal else "-", 1, 1, 'C', link=link_soal)
+                no += 1
+            pdf.ln(5)
+
+        # BAGIAN 2: NON-UAS
+        df_non_uas = df_filtered[~df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
+        if not df_non_uas.empty:
+            pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'B. UJIAN SKRIPSI / PROPOSAL / KOMPREHENSIF', 0, 1, 'L')
+            pdf.set_fill_color(230, 230, 230); pdf.set_font('Arial', 'B', 8)
+            cols = [('NO', 10), ('URAIAN KEGIATAN', 90), ('BERITA ACARA', 40), ('DOKUMENTASI', 40)]
+            for txt, w in cols: pdf.cell(w, 8, txt, 1, 0, 'C', 1)
+            pdf.ln(); pdf.set_font('Arial', '', 8)
+            no = 1
+            for _, row in df_non_uas.iterrows():
+                ev = parse_evidence_full(row)
+                uraian = f"{row.get('Pilih Jenis Ujian')} - {row.get('Nama Lengkap Mahasiswa','-')}"
+                uraian = uraian.encode('latin-1', 'ignore').decode('latin-1')
+
+                link_ba = ev['ba'][0]['original'] if ev['ba'] else ""
+                link_dok = ev['foto'][0]['original'] if ev['foto'] else ""
+                h = 8
+                if pdf.get_y() + h > 260: pdf.add_page()
+                pdf.cell(10, h, str(no), 1, 0, 'C')
+                pdf.cell(90, h, uraian[:55], 1, 0, 'L')
+                pdf.cell(40, h, "Buka File" if link_ba else "-", 1, 0, 'C', link=link_ba)
+                pdf.cell(40, h, "Buka File" if link_dok else "-", 1, 1, 'C', link=link_dok)
+                no += 1
+
+        pdf.ln(10)
+        if pdf.get_y() > 240: pdf.add_page()
+        pdf.set_x(120); pdf.cell(60, 5, f'Ternate, {datetime.now().strftime("%d-%m-%Y")}', 0, 1, 'C')
+        pdf.set_x(120); pdf.cell(60, 5, 'Dosen Yang Melaporkan,', 0, 1, 'C'); pdf.ln(20)
+        pdf.set_x(120); pdf.set_font('Arial', 'B', 9); pdf.cell(60, 5, dosen_name, 0, 1, 'C')
+        return pdf.output(dest='S').encode('latin-1', 'ignore')
+    except Exception as e:
+        return None
 
 # --- GENERATOR WORD EVIDENCE (FIXED HYPERLINK) ---
 def add_hyperlink(paragraph, url, text, color="0000FF", underline=True):
-    """
-    Fungsi Helper Hyperlink Word yang SUDAH DIPERBAIKI.
-    Menggunakan manipulasi OXML langsung agar kompatibel.
-    """
-    # 1. Create Relationship
     part = paragraph.part
     r_id = part.relate_to(url, RT.HYPERLINK, is_external=True)
-
-    # 2. Create <w:hyperlink> element
     hyperlink = OxmlElement('w:hyperlink')
     hyperlink.set(qn('r:id'), r_id)
-
-    # 3. Create <w:r> element
     new_run = OxmlElement('w:r')
-
-    # 4. Create properties (Color/Underline)
     rPr = OxmlElement('w:rPr')
     if color:
         c = OxmlElement('w:color')
@@ -203,81 +201,78 @@ def add_hyperlink(paragraph, url, text, color="0000FF", underline=True):
         u.set(qn('w:val'), 'single')
         rPr.append(u)
     new_run.append(rPr)
-
-    # 5. Add Text
     new_text = OxmlElement('w:t')
     new_text.text = text
     new_run.append(new_text)
-
-    # 6. Append
     hyperlink.append(new_run)
     paragraph._element.append(hyperlink)
-
     return hyperlink
 
 def create_evidence_docx_bytes(df_filtered, dosen_name, periode_label):
-    doc = Document()
-    doc.add_paragraph('LAPORAN BUKTI FISIK PELAKSANAAN UJIAN').alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_paragraph(f'PERIODE: {periode_label}').alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_paragraph(f'Nama Dosen: {dosen_name}')
-    doc.add_paragraph('\n')
-
-    # TABEL UAS
-    df_uas = df_filtered[df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
-    if not df_uas.empty:
-        doc.add_paragraph('A. UJIAN AKHIR SEMESTER (UAS)').runs[0].bold = True
-        table = doc.add_table(rows=1, cols=5); table.style = 'Table Grid'
-        hdr = table.rows[0].cells
-        hdr[0].text='NO'; hdr[1].text='MATA KULIAH'; hdr[2].text='BERITA ACARA'; hdr[3].text='DOKUMENTASI'; hdr[4].text='NASKAH SOAL'
-        no = 1
-        for _, row in df_uas.iterrows():
-            ev = parse_evidence_full(row)
-            row_cells = table.add_row().cells
-            row_cells[0].text = str(no)
-            row_cells[1].text = f"{row.get('Nama Matkul','-')} ({row.get('Nama Kelas','-')})"
-            
-            ba = ev['ba'][0]['original'] if ev['ba'] else None
-            dok = ev['foto'][0]['original'] if ev['foto'] else None
-            soal = ev['naskah'][0]['original'] if ev['naskah'] else None
-            
-            if ba: add_hyperlink(row_cells[2].add_paragraph(), ba, "Buka File")
-            else: row_cells[2].text = "-"
-            if dok: add_hyperlink(row_cells[3].add_paragraph(), dok, "Buka File")
-            else: row_cells[3].text = "-"
-            if soal: add_hyperlink(row_cells[4].add_paragraph(), soal, "Buka File")
-            else: row_cells[4].text = "-"
-            no += 1
+    try:
+        doc = Document()
+        doc.add_paragraph('LAPORAN BUKTI FISIK PELAKSANAAN UJIAN').alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_paragraph(f'PERIODE: {periode_label}').alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_paragraph(f'Nama Dosen: {dosen_name}')
         doc.add_paragraph('\n')
 
-    # TABEL NON-UAS
-    df_non = df_filtered[~df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
-    if not df_non.empty:
-        doc.add_paragraph('B. UJIAN PROPOSAL / SKRIPSI / KOMPREHENSIF').runs[0].bold = True
-        table = doc.add_table(rows=1, cols=4); table.style = 'Table Grid'
-        hdr = table.rows[0].cells
-        hdr[0].text='NO'; hdr[1].text='URAIAN KEGIATAN'; hdr[2].text='BERITA ACARA'; hdr[3].text='DOKUMENTASI'
-        no = 1
-        for _, row in df_non.iterrows():
-            ev = parse_evidence_full(row)
-            row_cells = table.add_row().cells
-            row_cells[0].text = str(no)
-            row_cells[1].text = f"{row.get('Pilih Jenis Ujian')} - {row.get('Nama Lengkap Mahasiswa')}"
-            
-            ba = ev['ba'][0]['original'] if ev['ba'] else None
-            dok = ev['foto'][0]['original'] if ev['foto'] else None
-            
-            if ba: add_hyperlink(row_cells[2].add_paragraph(), ba, "Buka File")
-            else: row_cells[2].text = "-"
-            if dok: add_hyperlink(row_cells[3].add_paragraph(), dok, "Buka File")
-            else: row_cells[3].text = "-"
-            no += 1
-            
-    doc.add_paragraph('\n')
-    sig = doc.add_paragraph(f'Ternate, {datetime.now().strftime("%d-%m-%Y")}\nDosen Yang Melaporkan,\n\n\n\n\n{dosen_name}')
-    sig.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        # TABEL UAS
+        df_uas = df_filtered[df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
+        if not df_uas.empty:
+            doc.add_paragraph('A. UJIAN AKHIR SEMESTER (UAS)').runs[0].bold = True
+            table = doc.add_table(rows=1, cols=5); table.style = 'Table Grid'
+            hdr = table.rows[0].cells
+            hdr[0].text='NO'; hdr[1].text='MATA KULIAH'; hdr[2].text='BERITA ACARA'; hdr[3].text='DOKUMENTASI'; hdr[4].text='NASKAH SOAL'
+            no = 1
+            for _, row in df_uas.iterrows():
+                ev = parse_evidence_full(row)
+                row_cells = table.add_row().cells
+                row_cells[0].text = str(no)
+                row_cells[1].text = f"{row.get('Nama Matkul','-')} ({row.get('Nama Kelas','-')})"
+                
+                ba = ev['ba'][0]['original'] if ev['ba'] else None
+                dok = ev['foto'][0]['original'] if ev['foto'] else None
+                soal = ev['naskah'][0]['original'] if ev['naskah'] else None
+                
+                if ba: add_hyperlink(row_cells[2].add_paragraph(), ba, "Buka File")
+                else: row_cells[2].text = "-"
+                if dok: add_hyperlink(row_cells[3].add_paragraph(), dok, "Buka File")
+                else: row_cells[3].text = "-"
+                if soal: add_hyperlink(row_cells[4].add_paragraph(), soal, "Buka File")
+                else: row_cells[4].text = "-"
+                no += 1
+            doc.add_paragraph('\n')
 
-    f = BytesIO(); doc.save(f); f.seek(0)
-    return f.getvalue()
+        # TABEL NON-UAS
+        df_non = df_filtered[~df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
+        if not df_non.empty:
+            doc.add_paragraph('B. UJIAN PROPOSAL / SKRIPSI / KOMPREHENSIF').runs[0].bold = True
+            table = doc.add_table(rows=1, cols=4); table.style = 'Table Grid'
+            hdr = table.rows[0].cells
+            hdr[0].text='NO'; hdr[1].text='URAIAN KEGIATAN'; hdr[2].text='BERITA ACARA'; hdr[3].text='DOKUMENTASI'
+            no = 1
+            for _, row in df_non.iterrows():
+                ev = parse_evidence_full(row)
+                row_cells = table.add_row().cells
+                row_cells[0].text = str(no)
+                row_cells[1].text = f"{row.get('Pilih Jenis Ujian')} - {row.get('Nama Lengkap Mahasiswa')}"
+                
+                ba = ev['ba'][0]['original'] if ev['ba'] else None
+                dok = ev['foto'][0]['original'] if ev['foto'] else None
+                
+                if ba: add_hyperlink(row_cells[2].add_paragraph(), ba, "Buka File")
+                else: row_cells[2].text = "-"
+                if dok: add_hyperlink(row_cells[3].add_paragraph(), dok, "Buka File")
+                else: row_cells[3].text = "-"
+                no += 1
+                
+        doc.add_paragraph('\n')
+        sig = doc.add_paragraph(f'Ternate, {datetime.now().strftime("%d-%m-%Y")}\nDosen Yang Melaporkan,\n\n\n\n\n{dosen_name}')
+        sig.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+        f = BytesIO(); doc.save(f); return f.getvalue()
+    except Exception as e:
+        return None
 
 # --- GENERATOR LCKB (Menu 2) ---
 class LCKB_PDF(FPDF):
@@ -345,12 +340,14 @@ if df is not None:
         st.title("📂 Data Evidence")
         c1, c2, c3 = st.columns(3)
         dsn = c1.selectbox("Dosen:", DAFTAR_DOSEN_RESMI)
-        mode = c2.selectbox("Filter:", ["Bulanan", "Semester Ganjil", "Semester Genap", "Tahunan"])
+        # UPDATE: Ditambahkan 'Semua Data'
+        mode = c2.selectbox("Filter Waktu:", ["Bulanan", "Semester Ganjil", "Semester Genap", "Tahunan", "Semua Data"])
         thn = c3.number_input("Tahun", 2024, 2030, datetime.now().year)
         
         # Filter Logic
         df_d = df[df.astype(str).apply(lambda x: x.str.contains(normalize_name(dsn), case=False)).any(axis=1)].copy()
         label = f"TAHUN {thn}"
+        
         if mode == "Bulanan":
             bln = st.selectbox("Bulan:", list(BULAN_INDO.values()))
             b_int = list(BULAN_INDO.keys())[list(BULAN_INDO.values()).index(bln)]
@@ -362,8 +359,11 @@ if df is not None:
         elif mode == "Semester Genap":
             df_f = df_d[(df_d['Bulan'].isin([1,2,3,4,5,6]))&(df_d['Tahun']==thn)]
             label = f"SEMESTER GENAP {thn}"
-        else:
+        elif mode == "Tahunan":
             df_f = df_d[df_d['Tahun']==thn]
+        else: # SEMUA DATA
+            df_f = df_d
+            label = "SEMUA RIWAYAT DATA"
 
         st.divider(); st.write(f"Menampilkan **{len(df_f)}** data ({label})")
         
