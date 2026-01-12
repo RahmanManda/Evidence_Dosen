@@ -112,15 +112,11 @@ def upload_file_to_drive(file_obj, filename, dosen_name, tahun, semester, katego
 
 # --- FUNGSI HELPER & PARSING ---
 def normalize_name(raw_name):
-    """Membersihkan nama dari gelar dan tanda baca untuk pencarian yang akurat"""
     if pd.isna(raw_name): return ""
     name = str(raw_name).upper()
-    # Hapus gelar akademik umum
     gelar_pattern = r'\b(DR|DRA|DRS|IR|S\. ?PD|M\. ?PD|S\. ?AG|M\. ?AG|S\. ?HUM|M\. ?HUM|S\. ?SI|M\. ?SI|S\. ?KOM|M\. ?KOM|PH\. ?D|M\. ?PI|S\. ?H|M\. ?H|I|II|S\. ?SOS|M\. ?SOS|M\. ?A|M\. ?PHIL|M\. ?PD\. ?I|S\. ?PD\. ?I|HI|H)\b'
     name = re.sub(gelar_pattern, '', name)
-    # Hapus titik dan koma agar "M. Sebe" sama dengan "M SEBE"
     name = re.sub(r'[.,]', ' ', name)
-    # Hapus spasi berlebih
     name = " ".join(name.split())
     return name
 
@@ -144,10 +140,12 @@ def process_links(raw_link_str):
         processed.append({'original': link, 'thumb': thumb})
     return processed
 
+# --- FUNGSI PARSING UTAMA (DIPERBAIKI SPESIFIK) ---
 def parse_evidence_full(row):
-    jenis = str(row.get('Pilih Jenis Ujian', ''))
+    jenis = str(row.get('Pilih Jenis Ujian', '')).upper()
     
     def find_val(keywords):
+        # Cari kolom yang mengandung SEMUA keyword
         for c in row.index:
             if all(k.lower() in c.lower() for k in keywords):
                 return row[c]
@@ -159,14 +157,24 @@ def parse_evidence_full(row):
         raw_ba = find_val(['berita', 'acara', 'uas'])
         raw_foto = find_val(['foto', 'dokumentasi', 'uas'])
         raw_naskah = find_val(['naskah', 'soal'])
-    elif 'Kompre' in jenis:
+    
+    elif 'PROPOSAL' in jenis:
+        # Spesifik cari kata 'Proposal' di judul kolom
+        raw_ba = find_val(['berita', 'acara', 'proposal'])
+        raw_foto = find_val(['foto', 'dokumentasi', 'proposal'])
+        raw_undangan = find_val(['undangan', 'proposal'])
+
+    elif 'SKRIPSI' in jenis or 'MUNAQASYAH' in jenis:
+        # Spesifik cari kata 'Skripsi' di judul kolom
+        raw_ba = find_val(['berita', 'acara', 'skripsi'])
+        raw_foto = find_val(['foto', 'dokumentasi', 'skripsi'])
+        raw_undangan = find_val(['undangan', 'skripsi'])
+
+    elif 'KOMPRE' in jenis:
+        # Spesifik cari kata 'Komprehensif' di judul kolom
         raw_ba = find_val(['berita', 'acara', 'kompre'])
         raw_foto = find_val(['foto', 'dokumentasi', 'kompre'])
-        raw_penunjukan = find_val(['penunjukan', 'penguji']) 
-    else: # Proposal/Skripsi
-        raw_ba = find_val(['berita', 'acara'])
-        raw_foto = find_val(['foto', 'dokumentasi'])
-        raw_undangan = find_val(['undangan']) 
+        raw_penunjukan = find_val(['penunjukan', 'kompre']) # Biasanya SK/Penunjukan
 
     return {
         'ba': process_links(raw_ba), 
@@ -184,7 +192,6 @@ def load_data(url):
         df['Timestamp'] = pd.to_datetime(df['Timestamp'], dayfirst=True, errors='coerce')
         df['Bulan'] = df['Timestamp'].dt.month
         df['Tahun'] = df['Timestamp'].dt.year
-        
         keywords = ['dosen', 'pembimbing', 'penguji']
         target_cols = [c for c in df.columns if 'nama' in c.lower() and any(k in c.lower() for k in keywords)]
         return df, target_cols
@@ -192,7 +199,7 @@ def load_data(url):
         st.error(f"Error membaca CSV: {e}")
         return None, None
 
-# --- GENERATOR PDF ---
+# --- GENERATOR PDF (Fix Link Preview) ---
 class EvidencePDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -207,6 +214,7 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
         pdf.set_font('Arial', '', 10); pdf.cell(0, 5, f'PERIODE: {periode_label.upper()}', 0, 1, 'C'); pdf.ln(8)
         pdf.set_font('Arial', '', 10); pdf.cell(30, 5, 'Nama Dosen', 0, 0); pdf.cell(5, 5, ':', 0, 0); pdf.cell(0, 5, dosen_name, 0, 1); pdf.ln(5)
 
+        # BAGIAN 1: UAS
         df_uas = df_filtered[df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
         if not df_uas.empty:
             pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'A. UJIAN AKHIR SEMESTER (UAS)', 0, 1, 'L')
@@ -230,6 +238,7 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 no += 1
             pdf.ln(5)
 
+        # BAGIAN 2: NON-UAS
         df_non = df_filtered[~df_filtered['Pilih Jenis Ujian'].str.contains('UAS', case=False, na=False)]
         if not df_non.empty:
             pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, 'B. UJIAN LAINNYA', 0, 1, 'L')
@@ -241,9 +250,12 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 ev = parse_evidence_full(row)
                 ur = f"{row.get('Pilih Jenis Ujian')} - {row.get('Nama Lengkap Mahasiswa','-')}".encode('latin-1', 'ignore').decode('latin-1')
                 l_ba = ev['ba'][0]['original'] if ev['ba'] else ""
+                
+                # Logic Surat: Undangan atau Penunjukan
                 l_surat = ""
                 if ev['undangan']: l_surat = ev['undangan'][0]['original']
                 elif ev['penunjukan']: l_surat = ev['penunjukan'][0]['original']
+                
                 l_dok = ev['foto'][0]['original'] if ev['foto'] else ""
                 
                 if pdf.get_y() + 8 > 260: pdf.add_page()
@@ -303,9 +315,11 @@ def create_evidence_docx_bytes(df_filtered, dosen_name, periode_label):
             for _, row in df_non.iterrows():
                 ev = parse_evidence_full(row)
                 rc = table.add_row().cells; rc[0].text=str(no); rc[1].text=f"{row.get('Pilih Jenis Ujian')} - {row.get('Nama Lengkap Mahasiswa')}"
+                
                 l_surat = None
                 if ev['undangan']: l_surat = ev['undangan'][0]['original']
                 elif ev['penunjukan']: l_surat = ev['penunjukan'][0]['original']
+
                 fill_cell(rc[2], ev['ba'][0]['original'] if ev['ba'] else None)
                 fill_cell(rc[3], l_surat)
                 fill_cell(rc[4], ev['foto'][0]['original'] if ev['foto'] else None)
@@ -420,7 +434,6 @@ nama_dekan = st.sidebar.text_input("Nama Dekan", "Dr. H. Sahjad M. Aksan, M.Phil
 nip_dekan = st.sidebar.text_input("NIP Dekan", "19xxxxxxx")
 
 if df is not None:
-    # --- AUTO DETECT YEAR ---
     max_year = int(df['Tahun'].max()) if not df['Tahun'].isnull().all() else datetime.now().year
 
     # --- MENU 1 ---
@@ -432,17 +445,12 @@ if df is not None:
         
         thn = c3.number_input("Tahun", 2024, 2030, max_year)
         
-        # --- PERBAIKAN LOGIKA SEARCH: NORMALIZE KOLOM DATA ---
         search_name = normalize_name(dsn)
-        
-        # Buat mask untuk mencari nama di semua kolom target yang sudah di-normalize
         mask = pd.Series(False, index=df.index)
         for col in target_cols:
-            # Normalize isi kolom dulu sebelum dicocokkan
             norm_col = df[col].astype(str).apply(normalize_name)
             mask |= norm_col.str.contains(search_name, case=False, regex=False)
         
-        # Filter berdasarkan Nama yang sudah fixed
         df_d = df[mask].copy()
 
         label = f"TAHUN {thn}"
@@ -457,7 +465,6 @@ if df is not None:
         elif mode == "Tahunan":
             df_f = df_d[df_d['Tahun']==thn]
         else: 
-            # SEMUA DATA: Ambil semua tanpa filter tahun
             df_f = df_d
             label = "SEMUA RIWAYAT DATA"
 
@@ -494,7 +501,6 @@ if df is not None:
         b_int = list(BULAN_INDO.keys())[list(BULAN_INDO.values()).index(bln)]
         semester = "Semester Ganjil" if b_int >= 7 else "Semester Genap"
         
-        # --- PERBAIKAN LOGIKA SEARCH MENU 2 ---
         search_name = normalize_name(dsn)
         mask = pd.Series(False, index=df.index)
         for col in target_cols:
