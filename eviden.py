@@ -80,7 +80,7 @@ def upload_file_to_drive(file_obj, filename, dosen_name, tahun, semester, katego
     except Exception as e:
         st.error(f"Gagal Upload Drive: {e}"); return None, None
 
-# --- FUNGSI HELPER & PARSING ---
+# --- FUNGSI HELPER & PARSING (FIXED LOGIC) ---
 def normalize_name(raw_name):
     if pd.isna(raw_name): return ""
     name = str(raw_name).upper()
@@ -113,27 +113,40 @@ def process_links(raw_link_str):
 def parse_evidence_full(row):
     jenis = str(row.get('Pilih Jenis Ujian', ''))
     
+    # FUNGSI PENCARI KOLOM YANG LEBIH SPESIFIK
+    # Memastikan tidak salah ambil kolom kosong dari jenis ujian lain
     def find_val(keywords):
         for c in row.index:
+            # Semua keyword harus ada dalam nama kolom
             if all(k.lower() in c.lower() for k in keywords):
                 return row[c]
         return None
 
     raw_ba = raw_foto = raw_naskah = raw_undangan = raw_penunjukan = None
 
+    # 1. LOGIKA UAS (Harus ada kata 'UAS' di kolom)
     if 'UAS' in jenis:
         raw_ba = find_val(['berita', 'acara', 'uas'])
         raw_foto = find_val(['foto', 'dokumentasi', 'uas'])
         raw_naskah = find_val(['naskah', 'soal'])
+    
+    # 2. LOGIKA KOMPRE (Harus ada kata 'Kompre')
     elif 'Kompre' in jenis:
         raw_ba = find_val(['berita', 'acara', 'kompre'])
         raw_foto = find_val(['foto', 'dokumentasi', 'kompre'])
-        raw_penunjukan = find_val(['penunjukan', 'penguji']) # Deteksi Penunjukan
-    else:
-        # Proposal/Skripsi
-        raw_ba = find_val(['berita', 'acara'])
-        raw_foto = find_val(['foto', 'dokumentasi'])
-        raw_undangan = find_val(['undangan']) 
+        raw_penunjukan = find_val(['penunjukan', 'penguji']) 
+    
+    # 3. LOGIKA PROPOSAL (Harus ada kata 'Proposal')
+    elif 'Proposal' in jenis:
+        raw_ba = find_val(['berita', 'acara', 'proposal'])
+        raw_foto = find_val(['foto', 'dokumentasi', 'proposal'])
+        raw_undangan = find_val(['undangan', 'proposal'])
+
+    # 4. LOGIKA SKRIPSI (Harus ada kata 'Skripsi')
+    elif 'Skripsi' in jenis:
+        raw_ba = find_val(['berita', 'acara', 'skripsi'])
+        raw_foto = find_val(['foto', 'dokumentasi', 'skripsi'])
+        raw_undangan = find_val(['undangan', 'skripsi'])
 
     return {
         'ba': process_links(raw_ba), 
@@ -213,7 +226,7 @@ def create_evidence_pdf_bytes(df_filtered, dosen_name, periode_label):
                 ur = f"{row.get('Pilih Jenis Ujian')} - {row.get('Nama Lengkap Mahasiswa','-')}".encode('latin-1', 'ignore').decode('latin-1')
                 l_ba = ev['ba'][0]['original'] if ev['ba'] else ""
                 
-                # Logic Penentuan Link Surat
+                # Logic Penentuan Link Surat (Otomatis pilih yg ada)
                 l_surat = ""
                 if ev['undangan']: l_surat = ev['undangan'][0]['original']
                 elif ev['penunjukan']: l_surat = ev['penunjukan'][0]['original']
