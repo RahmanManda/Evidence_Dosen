@@ -31,7 +31,7 @@ DAFTAR_DOSEN_RESMI = [
     "Drs. Ramli Yusuf, M.Pd.", "Elfira Mahmud, M.Pd.", "Hamdy M. Zen, M. Pd.I",
     "Irno, S.Hum., M.Hum.", "M. Rizki Hi. Aman", "Mawardi Djamaludin",
     "Minggusta Juliadarma, M.Pd.I", "Mudayanah, M.Pd", "Puji Dwi Rahayu, M.Pd.","Nurmala Buamona, S.Pd., M.Pd.I",
-    "Rinelsa R. Husaen, M.Pd", "Yani Djawa, S.Pd,M.Pd.Si", "Ria Hayati, M.Pd.","Zainuddin Arifin", "Dr. Adiyana Adam, M. Pd.I"
+    "Rinelsa R. Husaen, M.Pd", "Yani Djawa, S.Pd,M.Pd.Si", "Ria Hayati, M.Pd.","Zainuddin Arifin", "Dr. Arif Rahman Fitrianto, S.Pd.I., M.A","Dr. Adiyana Adam, M. Pd.I"
 ]
 
 KATEGORI_LABEL = {
